@@ -83,7 +83,7 @@ input[type=submit],input[type=reset],input[type=button] {
 }
 
 /* Give text inputs a sunken appearance */
-input[type=text] {
+input[type=text],input[type=password] {
     border-bottom: 4px solid #222;
     border-right: 4px solid #222;
     border-left: 4px solid black;
