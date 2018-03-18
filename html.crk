@@ -72,7 +72,20 @@ Raw makePage(String title, Raw contents) {
               <title>dweb$(title ? '/' + title : ''))</title>
             </head>
             <body>
-              $(contents ? contents : Raw(""))
+              <div class="topbar">
+                <h1>DWeb</h1>
+                <span class="subtitle">Mindhog's Dynamic Webserver</span>
+              </div>
+
+              <div class="sidebar">
+                <ul>
+                  <li><a href="/dweb/">DWeb root</a>
+                </ul>
+              </div>
+
+              <div class="main">
+                $(contents ? contents : Raw(""))
+              </div>
             </body>
           </html>
           `;

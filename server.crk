@@ -54,8 +54,8 @@ bool userCheck(Request req) {
 
     out I`</ul>
           <form action="/dweb/addBookmark" method="POST">
-            Description: <input type="text" name="desc"><br>
-            URL: <input type="text" name="url"><br>
+            <label>Description:</label> <input type="text" name="desc"><br>
+            <label>URL:</label> <input type="text" name="url"><br>
             <input type="submit"><input type="reset">
           `;
 

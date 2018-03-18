@@ -1,6 +1,6 @@
 
 body {
-    color: #fff;
+    color: #0ff;
     background-color: #000;
     font: 18px helvetica,sans-serif;
 }
@@ -56,6 +56,38 @@ div.topbar h1 {
     font: 80px courier,sans-serif;
     padding: 0px;
     margin: 0px;
+}
+
+h1 {
+    color: #ff0;
+}
+
+h2 {
+    color: #cc0;
+}
+
+h3 {
+    color: #990;
+}
+
+input {
+    color: #0ff;
+    background-color: #111;
+}
+
+input[type=submit],input[type=reset],input[type=button] {
+    border-bottom: 4px solid black;
+    border-right: 4px solid black;
+    border-left: 4px solid #222;
+    border-top: 4px solid #222;
+}
+
+/* Give text inputs a sunken appearance */
+input[type=text] {
+    border-bottom: 4px solid #222;
+    border-right: 4px solid #222;
+    border-left: 4px solid black;
+    border-top: 4px solid black;
 }
 
 pre {
