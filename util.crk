@@ -1,0 +1,56 @@
+
+import crack.functor Functor1;
+import crack.http.auth AuthInfoImpl, Concatter, User, StupidRNG;
+import crack.http.core Request;
+import crack.http.util encodeForURI, URI_QUERY_VAL;
+import crack.io FStr;
+import crack.lang AppendBuffer;
+import crack.time Time;
+
+## Escapes <, >, and & for use in HTML.
+String h(String val) {
+    if (val is null)
+        return null;
+    AppendBuffer result = {val.count()};
+    for (int i = 0; i < val.count(); ++i) {
+        ch := val[i];
+        if (ch == b'&')
+            result.extend('&amp;');
+        else if (ch == b'<')
+            result.extend('&lt;');
+        else if (ch == b'>')
+            result.extend('&gt;');
+        else
+            result.append(ch)
+    }
+
+    return String(result, true);
+}
+
+## Escapes a value for use in a URI in an html document.
+String e(String val) {
+    if (val is null)
+        return null;
+    return h(encodeForURI(val, URI_QUERY_VAL));
+}
+
+## Returns the current user id, null if there is none.
+String getUser(Request req) {
+    user := User.get(req);
+    return user ? user.id : null;
+}
+
+alias LoginURL = Functor1[String, String];
+
+class AuthInfo : AuthInfoImpl {
+    String __prefix;
+
+    oper init(String prefix, uint64 salt) :
+        AuthInfoImpl(StupidRNG(salt, Time.now().secs)),
+        __prefix = prefix {
+    }
+
+    LoginURL getLoginURL() {
+        return Concatter(FStr() `$__prefix/login?url=$__prefix`);
+    }
+}

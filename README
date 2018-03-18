@@ -1,0 +1,28 @@
+
+Problems
+--------
+
+The server pretty much needs to be rooted at /dweb (see authdb.crk) because
+all of the redirects are hard-coded to do this.
+
+
+Setup
+-----
+
+You'll need to set up the following:
+
+    server_salt.data
+        This is the server salt file.  It can contain anything and be of any
+        length.  This is only used to seed the random number generator.  We
+        should replace it with /dev/urandom.
+    users.db & cookies.db
+        Create an admin user and passord with mkadmin.  Can be any user id.
+
+Starting the server
+-------------------
+
+    $ crack server.crk
+
+To clear all cookies, you can just delete cookies.db.
+
+

@@ -1,0 +1,91 @@
+## Module containing AuthDBImpl.
+
+import crack.enc.base64 altEncode;
+import crack.functor Functor0, Functor1;
+import crack.http.auth AuthInfo, Concatter, User;
+import crack.lang cmp, makeHashVal;
+import crack.protobuf readMessageFromString, Field, Message, ProtoWriter;
+import kvjournal.kvdb DBIFace;
+
+@import crack.ann impl;
+@import crack.protobuf.ann protobuf;
+
+@protobuf {
+    message UserPB {
+        required string id = 1;
+        required string passwordHash = 2;
+        required string passwordSalt = 3;
+    }
+}
+
+alias RandomNumberGenerator = Functor0[String];
+alias LoginURL = Functor1[String, String];
+
+String makeLoginURL(String path) {
+    return '/dweb/login?url=' +
+           (path.startsWith('/dweb/') ? path : '/dweb' + path);
+}
+
+## An AuthInfo implementation that reads and stores user and cookie
+## information in a pair of DBIFace's, allowing them to be persisted.
+class AuthDBImpl @impl AuthInfo {
+
+    Functor0[String] __rand;
+    DBIFace __users, __cookies;
+
+    ## Constructs an auth db implementation given database interfaces for
+    ## "users" and "cookies".  "users" should be a mapping from a user id to
+    ## UserPB objects.  "cookies" should be a mapping from cookie id to
+    ## CoookiePB objects.
+    oper init(RandomNumberGenerator rand, DBIFace users, DBIFace cookies) :
+        __rand = rand,
+        __users = users,
+        __cookies = cookies {
+    }
+
+    LoginURL getLoginURL() {
+        return LoginURL.Wrap(makeLoginURL);
+    }
+
+    User getUser(String user) {
+        import crack.io cerr;
+        cerr `users = $__users, user = $user\n`;
+        userPBData := __users.get(user);
+        if (userPBData) {
+            UserPB userPB = {};
+            readMessageFromString(userPB, userPBData);
+            user := User();
+            user.id = userPB.id;
+            user.passwordHash = userPB.passwordHash;
+            user.salt = userPB.passwordSalt;
+            return user;
+        } else {
+            return null;
+        }
+    }
+
+    User lookUp(String cookie) {
+        user := __cookies.get(cookie);
+        return user ? getUser(user) : null;
+    }
+
+    String makeCookie(User user) {
+        cookie := altEncode(__rand());
+        __cookies[cookie] = user.id;
+        __cookies.commit();
+        return cookie;
+    }
+
+    User addUser(String name, String password, String salt) {
+        user := User();
+        user.id = name;
+        user.setPassword(password, salt);
+        userPB := UserPB();
+        userPB.id = name;
+        userPB.passwordHash = user.passwordHash;
+        userPB.passwordSalt = user.salt;
+        __users[name] = userPB.toString();
+        __users.commit();
+        return user;
+    }
+}

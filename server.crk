@@ -1,0 +1,114 @@
+import crack.cont.array Array;
+import crack.cont.hashmap HashMap;
+import crack.fs makePath;
+import crack.io cout, StringFormatter;
+import crack.http.auth AuthHandler, LoginHandler, User;
+import crack.http.core HandlerFunc, Request, RequestHandler;
+import crack.http.server Server;
+import crack.http.util parseQuery, Chain, PathDispatcher, PostHandler,
+    QueryParmMap, NOT_FOUND;
+import crack.functor Functor1, Function1;
+import crack.logger setLogLevel, DEBUG;
+import crack.protobuf readMessageFromString;
+
+import .data Bookmark, Data;
+import .html makePage, HTMLFormatter, Raw;
+
+@import crack.ann implements;
+
+Server server = {9191};
+data := Data();
+data.init();
+
+bool hello(Request req) {
+    cout `got request!\n`;
+    req.sendReply(200, 'text/plain', 'hello world!');
+    return true;
+}
+
+bool tinyPage(Request req) {
+    req.sendReply(200, 'text/html',
+                  makePage('hello', Raw('<a href="/dweb/hello">Hello!</a>'))
+                  );
+    return true;
+}
+
+bool log(Request req) {
+    cout `got $(req.path)\n`;
+    return false;
+}
+
+bool userCheck(Request req) {
+    user := User.get(req);
+    out := HTMLFormatter();
+    out I`<h1>Welcome, $(user.id)</h1>
+          <h2>Bookmarks</h2>
+          <ul>
+          `;
+
+    for (cur :in data.getBookmarks(user.id)) {
+        bookmark := Bookmark();
+        readMessageFromString(bookmark, cur.val);
+        out `<li><a href="$(bookmark.url)">$(bookmark.desc)</a>\n`;
+    }
+
+    out I`</ul>
+          <form action="/dweb/addBookmark" method="POST">
+            Description: <input type="text" name="desc"><br>
+            URL: <input type="text" name="url"><br>
+            <input type="submit"><input type="reset">
+          `;
+
+    req.sendReply(200, 'text/html', makePage(user.id, out.getRaw()));
+    return true;
+}
+
+bool addBookmark(Request req) {
+    parms := QueryParmMap.getOrMake(req);
+    if (!parms) {
+        parms = parseQuery(req.contents);
+        parms.putIn(req);
+    }
+    user := User.get(req);
+    url := parms.getSingle('url');
+    desc := parms.getSingle('desc');
+    if (!desc) {
+        req.sendReply(200, 'text/plain', 'Missing desc field');
+        return true;
+    }
+    if (!url) {
+        req.sendReply(200, 'text/plain', 'Missing url field');
+        return true;
+    }
+    data.addBookmark(user.id, desc, url);
+    userCheck(req);
+    return true;
+}
+
+const STYLE := makePath('style.css').readAll();
+bool style(Request req) {
+    req.sendReply(200, 'text/css', STYLE);
+    return true;
+}
+
+setLogLevel(DEBUG);
+
+
+authHandler := AuthHandler(data.auth);
+
+disp := PathDispatcher();
+disp['hello'] = HandlerFunc(hello);
+disp['tiny'] = HandlerFunc(tinyPage);
+disp[''] = HandlerFunc(hello);
+disp['user'] = Chain![authHandler, HandlerFunc(userCheck)];
+disp['addBookmark'] = Chain![authHandler,
+                             PostHandler(HandlerFunc(addBookmark))
+                             ];
+disp['login'] = LoginHandler(data.auth);
+disp['style.css'] = HandlerFunc(style);
+
+server.addHandler(HandlerFunc(log));
+server.addHandler(disp);
+server.addHandler(NOT_FOUND);
+cout `Serving.\n`;
+server.run();

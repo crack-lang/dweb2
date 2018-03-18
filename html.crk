@@ -1,0 +1,80 @@
+## Tools for generating our HTML pages.
+##
+## In addition to the classes documented, this includes the "u" alias for
+## encodeForURI().
+
+import crack.http.util encodeForURI;
+import crack.io StandardFormatter, StringFormatter, StringWriter;
+import crack.lang AppendBuffer;
+
+## Encodes plain string 'val' so that it can be safely used in an HTML
+## document.  Prefer to use HTMLFormatter instead.
+String encodeForHTML(String val) {
+    if (val is null)
+        return null;
+    AppendBuffer result = {val.count()};
+    for (int i = 0; i < val.count(); ++i) {
+        ch := val[i];
+        if (ch == b'&')
+            result.extend('&amp;');
+        else if (ch == b'<')
+            result.extend('&lt;');
+        else if (ch == b'>')
+            result.extend('&gt;');
+        else
+            result.append(ch)
+    }
+
+    return String(result, true);
+}
+
+## Shortcut for crack.http.util.encodeForURI()
+alias u = encodeForURI;
+
+## Appendage for encapsulating strings containing raw HTML, which must be used
+## without escaping.
+class Raw = String {}
+
+## Foormatter for safely formatting HTML.  Escapes special characters in all
+## strings.  Note that this doesn't work for URIs (it has no knowledge of the
+## HTML syntax it's emitting).  Use the "u" shortcut instead.
+class HTMLFormatter {
+
+    StringFormatter rep = {};
+
+    void format(Raw val) {
+        rep.write(val);
+    }
+
+    void format(StaticString val) {
+        rep.write(val);
+    }
+
+    void format(String val) {
+        rep.write(encodeForHTML(val));
+    }
+
+    ## Returns the raw HTML representation of the formatted HTML.  Should be
+    ## preferred over string() for type-safety.
+    Raw getRaw() {
+        return Raw(rep.string());
+    }
+}
+
+## Renders a standard DWeb page.
+##
+## Both title and contents may safely be null.
+Raw makePage(String title, Raw contents) {
+    out := HTMLFormatter();
+    out I`<html>
+            <head>
+              <link rel="stylesheet" href="/dweb/style.css" type="text/css">
+              <title>dweb$(title ? '/' + title : ''))</title>
+            </head>
+            <body>
+              $(contents ? contents : Raw(""))
+            </body>
+          </html>
+          `;
+    return Raw(out.getRaw());
+}

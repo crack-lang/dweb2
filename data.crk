@@ -1,0 +1,76 @@
+## DWeb data layer.
+
+import crack.cont.array Array;
+import crack.fs makePath;
+import crack.io Formatter;
+import crack.hash.sha256 SHA256;
+import crack.lang cmp, makeHashVal;
+import kvjournal.db BFile;
+import kvjournal.kvdb DBIFace, Partition;
+import crack.http.auth StupidRNG;
+import crack.protobuf Field, Message, ProtoWriter;
+
+import .authdb AuthDBImpl;
+
+@import crack.protobuf.ann protobuf;
+@import crack.ann impl;
+
+@protobuf {
+    version = 1
+
+    ## A URL and a descriptive string.
+    message Bookmark {
+        optional string desc = 1;
+        optional string url = 2;
+    }
+}
+
+## Contains all of the data objects and methods to access them.
+class Data {
+    DBIFace users, cookies;
+    AuthDBImpl auth;
+    StupidRNG rng;
+
+    ## General database.
+    DBIFace general;
+
+    void init() {
+        # Read and hash the salt file.
+        src := makePath('server_salt.data').reader();
+        hasher := SHA256();
+        while (buf := src.read(1024))
+            hasher.update(buf);
+        digest := hasher.digest();
+
+        users = BFile.makeFile(makePath('users.db'));
+        cookies = BFile.makeFile(makePath('cookies.db'));
+
+        rng = StupidRNG(array[uint64](digest.buffer)[0],
+                        array[uint64](digest.buffer + 8)[0]
+                        );
+
+        auth = AuthDBImpl(rng, users, cookies );
+
+        # Make the general database.
+        general = BFile.makeFile(makePath('general.db'));
+    }
+
+    ## Adds a user.
+    void addUser(String user, String password) {
+        auth.addUser(user, password, rng());
+    }
+
+    ## Adds a bookmark record for a user.
+    void addBookmark(String user, String desc, String url) {
+        bookmark := Bookmark();
+        bookmark.desc = desc;
+        bookmark.url = url;
+        general[user + '/' + desc] = bookmark.toString();
+        general.commit();
+    }
+
+    ## Get all bookmarks for the user.
+    Partition getBookmarks(String user) {
+        return Partition(general, user + '/');
+    }
+}
