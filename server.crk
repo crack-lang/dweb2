@@ -13,6 +13,7 @@ import crack.protobuf readMessageFromString;
 
 import .data Bookmark, Data;
 import .html makePage, HTMLFormatter, Raw;
+import .admin admin_registerAll = registerAll;
 
 @import crack.ann implements;
 
@@ -20,9 +21,29 @@ Server server = {9191};
 data := Data();
 data.init();
 
+## This really belongs in crack.http.auth
+bool softAuth(Request req) {
+    User user;
+    if (cookie := req.getCookie('SpugAuth'))
+        user = data.auth.lookUp(cookie.value);
+    if (user)
+        user.putIn(req);
+    return false;
+}
+
 bool hello(Request req) {
-    cout `got request!\n`;
-    req.sendReply(200, 'text/plain', 'hello world!');
+    out := HTMLFormatter();
+    out I`<h1>Welcome!</h1>
+          <p>Welcome to my dynamic webserver.
+          `;
+
+    user := User.get(req);
+    if (user)
+        out `<p>Logged in as $(user.id)\n`;
+    else
+        out `<p><a href="/dweb/login?url=/dweb/">Click here</a> to login.\n`;
+
+    req.sendReply(200, 'text/html', makePage('hello', out.getRaw()));
     return true;
 }
 
@@ -81,7 +102,7 @@ bool addBookmark(Request req) {
         return true;
     }
     data.addBookmark(user.id, desc, url);
-    userCheck(req);
+    req.sendRedirect(307, '/dweb/user');
     return true;
 }
 
@@ -97,15 +118,16 @@ setLogLevel(DEBUG);
 authHandler := AuthHandler(data.auth);
 
 disp := PathDispatcher();
-disp['hello'] = HandlerFunc(hello);
-disp['tiny'] = HandlerFunc(tinyPage);
-disp[''] = HandlerFunc(hello);
+disp['hello'] = Chain![HandlerFunc(softAuth), HandlerFunc(hello)];
+disp['tiny'] = Chain![HandlerFunc(softAuth), HandlerFunc(tinyPage)];
+disp[''] = Chain![HandlerFunc(softAuth), HandlerFunc(hello)];
 disp['user'] = Chain![authHandler, HandlerFunc(userCheck)];
 disp['addBookmark'] = Chain![authHandler,
                              PostHandler(HandlerFunc(addBookmark))
                              ];
 disp['login'] = LoginHandler(data.auth);
 disp['style.css'] = HandlerFunc(style);
+disp['admin'] = admin_registerAll(data, authHandler, '/dweb/admin');
 
 server.addHandler(HandlerFunc(log));
 server.addHandler(disp);

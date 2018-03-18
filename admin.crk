@@ -1,0 +1,130 @@
+## Admin pages.
+
+import crack.http.auth AuthHandler, User;
+import crack.http.core HandlerFunc, Request, RequestHandler;
+import crack.http.util parseQuery, Chain, PathDispatcher, PostHandler,
+    QueryParmMap;
+import crack.lang KeyError;
+import .html makePage, u, HTMLFormatter, Raw;
+import .data Data;
+
+## The base prefix.
+String pfx;
+
+## The data object.
+Data data;
+
+## Returns a single-button form.
+## action - URL of the form action
+## text - button text
+## value - value to populate the hidden "value" field with.
+Raw buttonForm(String action, String text, String value) {
+    out := HTMLFormatter();
+    out I`<form method="POST" action="$action">
+            <input type="submit" value="$text">
+            <input type="hidden" name="value" value="$value">
+          </form>`;
+    return out.getRaw();
+}
+
+bool manageUsers(Request req) {
+    out := HTMLFormatter();
+    out `<h2>Users</h2>\n`;
+    for (user :in data.iterUsers())
+        out I`<p>$(user.id)
+              $(buttonForm(pfx + '/deleteUser', 'Delete', user.id))\n`;
+
+    out I`\
+        <h2>Add User</h2>
+        <form method="POST" action="$(pfx + '/addUser')">
+          <table>
+            <tr>
+              <td><label>Id</label></td>
+              <td><input name="id" type="text"></td>
+            </tr>
+            <tr>
+              <td><label>Password</label></td>
+              <td><input name="password" type="password"></td>
+            </tr>
+            <tr><td colspan="2"><input type="submit"></td></tr>
+          </table>
+        </form>
+        `;
+    req.sendReply(200, 'text/html', makePage('manage users', out.getRaw()));
+    return true;
+}
+
+bool addUser(Request req) {
+    parms := QueryParmMap.getOrMake(req);
+    if (!parms) {
+        parms = parseQuery(req.contents);
+        parms.putIn(req);
+    }
+
+    id := parms.getSingle('id');
+    if (!id) {
+        req.sendReply(200, 'text/plain', 'Missing user id');
+        return true;
+    }
+    password := parms.getSingle('password');
+    if (!password) {
+        req.sendReply(200, 'text/plain', 'Missing password');
+        return true;
+    }
+
+    data.addUser(id, password);
+    req.sendRedirect(307, pfx + '/manageUsers');
+    return true;
+}
+
+bool deleteUser(Request req) {
+    parms := QueryParmMap.getOrMake(req);
+    if (!parms) {
+        parms = parseQuery(req.contents);
+        parms.putIn(req);
+    }
+
+    user := parms.getSingle('value');
+    if (!user) {
+        req.sendReply(200, 'text/plain', 'Missing user.');
+        return true;
+    }
+
+    try {
+        data.deleteUser(user);
+    } catch (KeyError ex) {
+        req.sendReply(200, 'text/plain', 'Invalid user id.');
+        return true;
+    }
+
+    req.sendRedirect(307, pfx + '/manageUsers');
+    return true;
+}
+
+bool verifyAdmin(Request req) {
+    if (User.get(req).id != 'mmuller') {
+        req.sendReply(403, "text/html",
+                      makePage('unauthorized',
+                               Raw(I"<h1>Unauthorized</h1>
+                                     <p>Sorry, you don't have the necessary
+                                     privileges to access this resource.
+                                     "
+                                   )
+                               )
+                      );
+        return true;
+    }
+    return false;
+}
+
+## Register all functions with a PathDispatcher().
+RequestHandler registerAll(Data data_, AuthHandler authHandler, String prefix) {
+    pfx = prefix;
+    data = data_;
+    disp := PathDispatcher();
+    # XXX Should be also checking for admin.
+    disp['manageUsers'] = HandlerFunc(manageUsers);
+    disp['addUser'] = PostHandler(addUser);
+    disp['deleteUser'] = PostHandler(deleteUser);
+    return Chain![authHandler, HandlerFunc(verifyAdmin), disp];
+}

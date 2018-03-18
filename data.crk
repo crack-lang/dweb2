@@ -6,11 +6,11 @@ import crack.io Formatter;
 import crack.hash.sha256 SHA256;
 import crack.lang cmp, makeHashVal;
 import kvjournal.db BFile;
-import kvjournal.kvdb DBIFace, Partition;
+import kvjournal.kvdb DBIFace, DBIter, Partition;
 import crack.http.auth StupidRNG;
-import crack.protobuf Field, Message, ProtoWriter;
+import crack.protobuf readMessageFromString, Field, Message, ProtoWriter;
 
-import .authdb AuthDBImpl;
+import .authdb AuthDBImpl, UserPB;
 
 @import crack.protobuf.ann protobuf;
 @import crack.ann impl;
@@ -23,6 +23,24 @@ import .authdb AuthDBImpl;
         optional string desc = 1;
         optional string url = 2;
     }
+}
+
+## Iterator for objects in which the value is a Message type.
+class Iter[T] {
+
+    DBIter cur;
+
+    oper init(DBIter iter) : cur = iter {}
+
+    T elem() {
+        T obj = {};
+        readMessageFromString(obj, cur.elem().val);
+        return obj;
+    }
+
+    void next() { cur.next() }
+    bool isTrue() { return cur.elem() }
+    Iter iter() { return this }
 }
 
 ## Contains all of the data objects and methods to access them.
@@ -60,6 +78,12 @@ class Data {
         auth.addUser(user, password, rng());
     }
 
+    ## Delete the user.  This currently doesn't clean up all of the user's
+    ## bookmarks, so it's kind of a security hole.
+    void deleteUser(String userId) {
+        users.delete(userId);
+    }
+
     ## Adds a bookmark record for a user.
     void addBookmark(String user, String desc, String url) {
         bookmark := Bookmark();
@@ -72,5 +96,10 @@ class Data {
     ## Get all bookmarks for the user.
     Partition getBookmarks(String user) {
         return Partition(general, user + '/');
+    }
+
+    ## Iterate over users in order by id.
+    Iter[UserPB] iterUsers() {
+        return Iter[UserPB](users.iter());
     }
 }
