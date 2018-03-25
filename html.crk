@@ -7,6 +7,8 @@ import crack.http.util encodeForURI;
 import crack.io StandardFormatter, StringFormatter, StringWriter;
 import crack.lang AppendBuffer;
 
+@export_symbols u;
+
 ## Encodes plain string 'val' so that it can be safely used in an HTML
 ## document.  Prefer to use HTMLFormatter instead.
 String encodeForHTML(String val) {
@@ -72,19 +74,23 @@ Raw makePage(String title, Raw contents) {
               <title>dweb$(title ? '/' + title : ''))</title>
             </head>
             <body>
-              <div class="topbar">
-                <h1>DWeb</h1>
-                <span class="subtitle">Mindhog's Dynamic Webserver</span>
-              </div>
+              <div class="page">
+                <div class="scrollpane">
 
-              <div class="sidebar">
-                <ul>
-                  <li><a href="/dweb/">DWeb root</a>
-                </ul>
-              </div>
+                  <div class="main">
+                    <div class="topbar">
+                      <h1>House of the Hog</h1>
+                      <span class="subtitle">Welcome to the Hog-house!</span>
+                    </div>
 
-              <div class="main">
-                $(contents ? contents : Raw(""))
+                    $(contents ? contents : Raw(""))
+                  </div>
+                </div>
+
+                <div class="bottombar">
+                    <span><a href="/dweb/">DWeb root</a></span>
+                </div>
+
               </div>
             </body>
           </html>
