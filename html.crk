@@ -3,11 +3,12 @@
 ## In addition to the classes documented, this includes the "u" alias for
 ## encodeForURI().
 
-import crack.http.util encodeForURI;
-import crack.io StandardFormatter, StringFormatter, StringWriter;
+import crack.http.core Request;
+import crack.http.util encodeForURI, parseQuery, QueryParmMap, URI_QUERY_VAL;
+import crack.io FStr, StandardFormatter, StringFormatter, StringWriter;
 import crack.lang AppendBuffer;
 
-@export_symbols u;
+String prefix;
 
 ## Encodes plain string 'val' so that it can be safely used in an HTML
 ## document.  Prefer to use HTMLFormatter instead.
@@ -30,8 +31,10 @@ String encodeForHTML(String val) {
     return String(result, true);
 }
 
-## Shortcut for crack.http.util.encodeForURI()
-alias u = encodeForURI;
+## Shortcut for crack.http.util.encodeForURI(contents, URI_QUERY_VAL)
+String u(String contents) {
+    return encodeForURI(contents, URI_QUERY_VAL);
+}
 
 ## Appendage for encapsulating strings containing raw HTML, which must be used
 ## without escaping.
@@ -63,37 +66,109 @@ class HTMLFormatter {
     }
 }
 
-## Renders a standard DWeb page.
-##
-## Both title and contents may safely be null.
-Raw makePage(String title, Raw contents) {
-    out := HTMLFormatter();
-    out I`<html>
-            <head>
-              <link rel="stylesheet" href="/dweb/style.css" type="text/css">
-              <title>dweb$(title ? '/' + title : ''))</title>
-            </head>
-            <body>
-              <div class="page">
-                <div class="scrollpane">
+class RequestHelper {
 
-                  <div class="main">
-                    <div class="topbar">
-                      <h1>House of the Hog</h1>
-                      <span class="subtitle">Welcome to the Hog-house!</span>
+    Request __req;
+    String __errorURL;
+    QueryParmMap __query;
+
+    oper init(Request req, String errorURL) :
+        __req = req,
+        __errorURL = errorURL {
+    }
+
+    QueryParmMap __getQueryParms() {
+        if (__query is null) {
+            __query = QueryParmMap.getOrMake(__req);
+
+            if (__req.contents) {
+                query := parseQuery(__req.contents);
+                if (__query) {
+                    # Merge with the query parms that came from the URL.
+                    for (item :in query)
+                        __query[item.key] = item.val;
+                } else {
+                    __query = query;
+                }
+            }
+
+            # If we haven't got a query map yet, just create an empty one.
+            if (!__query)
+                __query = QueryParmMap();
+
+        }
+
+        return __query;
+    }
+
+    ## Send an error redirect.  'url' is the path to the page to display
+    ## (excluding the prefix), 'message' is the error message.
+    bool error(String message) {
+        __req.sendRedirect(307, FStr() `$prefix$__errorURL?error=$(u(message))`);
+        return true;
+    }
+
+    ## Gets a single parameter.  Returns null if the parameter is not defined
+    ## and produces an error result
+    String getRequiredSingle(String parmName) {
+        parms := __getQueryParms();
+        result := parms.getSingle(parmName);
+        if (result is null)
+            error(FStr() `Missing parameter: $parmName`);
+        return result;
+    }
+
+    ## Returns a raw, formatted error message.
+    Raw __makeError(String message) {
+        out := HTMLFormatter();
+        out `<div class="error"><p>$message</div>`;
+        return out.getRaw();
+    }
+
+    ## Renders a standard DWeb page.  You should generall use reply() instead.
+    ##
+    ## Both title and contents may safely be null.
+    Raw makePage(String title, Raw contents) {
+
+        query := __getQueryParms();
+        error := query.getSingle('error');
+
+        out := HTMLFormatter();
+        out I`<html>
+                <head>
+                <link rel="stylesheet" href="$prefix/style.css" type="text/css">
+                <title>dweb$(title ? '/' + title : ''))</title>
+                </head>
+                <body>
+                <div class="page">
+                    <div class="scrollpane">
+
+                    <div class="main">
+                        <div class="topbar">
+                        <h1>House of the Hog</h1>
+                        <span class="subtitle">Welcome to the Hog-house!</span>
+                        </div>
+
+                        $(error ? __makeError(error) : Raw(''))
+
+                        $(contents ? contents : Raw(""))
+                    </div>
                     </div>
 
-                    $(contents ? contents : Raw(""))
-                  </div>
-                </div>
+                    <div class="bottombar">
+                        <span><a href="$prefix/">DWeb root</a></span>
+                    </div>
 
-                <div class="bottombar">
-                    <span><a href="/dweb/">DWeb root</a></span>
                 </div>
+                </body>
+            </html>
+            `;
+        return out.getRaw();
+    }
 
-              </div>
-            </body>
-          </html>
-          `;
-    return Raw(out.getRaw());
+    ## Send an HTML reply.
+    bool reply(String title, Raw contents) {
+        __req.sendReply(200, 'text/html', makePage(title, contents));
+        return true;
+    }
 }

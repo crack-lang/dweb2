@@ -1,3 +1,4 @@
+import crack.ascii parseInt;
 import crack.cont.array Array;
 import crack.cont.hashmap HashMap;
 import crack.fs makePath;
@@ -10,14 +11,17 @@ import crack.http.util parseQuery, Chain, PathDispatcher, PostHandler,
 import crack.functor Functor1, Function1;
 import crack.logger setLogLevel, DEBUG;
 import crack.protobuf readMessageFromString;
+import crack.sys argv;
 
 import .data Bookmark, Data;
-import .html makePage, HTMLFormatter, Raw;
+import .html prefix, u, HTMLFormatter, Raw, RequestHelper;
 import .admin admin_registerAll = registerAll;
+import .checklist checklist_registerAll = registerAll;
 
 @import crack.ann implements;
 
-Server server = {9191};
+Server server = {(argv.count() > 1) ? parseInt(argv[1]) : 9191};
+prefix = (argv.count() > 2) ? argv[2] : '/dweb';
 data := Data();
 data.init();
 
@@ -32,6 +36,7 @@ bool softAuth(Request req) {
 }
 
 bool hello(Request req) {
+    r := RequestHelper(req, '/error');
     out := HTMLFormatter();
     out I`<h1>Welcome!</h1>
           <p>Welcome to my dynamic webserver.
@@ -41,17 +46,14 @@ bool hello(Request req) {
     if (user)
         out `<p>Logged in as $(user.id)\n`;
     else
-        out `<p><a href="/dweb/login?url=/dweb/">Click here</a> to login.\n`;
+        out `<p><a href="$prefix/login?url=$prefix/">Click here</a> to login.\n`;
 
-    req.sendReply(200, 'text/html', makePage('hello', out.getRaw()));
-    return true;
+    return r.reply('hello', out.getRaw());
 }
 
 bool tinyPage(Request req) {
-    req.sendReply(200, 'text/html',
-                  makePage('hello', Raw('<a href="/dweb/hello">Hello!</a>'))
-                  );
-    return true;
+    r := RequestHelper(req, '/error');
+    return r.reply('hello', Raw('<a href="$prefix/hello">Hello!</a>'));
 }
 
 bool log(Request req) {
@@ -60,6 +62,7 @@ bool log(Request req) {
 }
 
 bool userCheck(Request req) {
+    r := RequestHelper(req, '/user');
     user := User.get(req);
     out := HTMLFormatter();
     out I`<h1>Welcome, $(user.id)</h1>
@@ -74,35 +77,24 @@ bool userCheck(Request req) {
     }
 
     out I`</ul>
-          <form action="/dweb/addBookmark" method="POST">
+          <form action="$prefix/addBookmark" method="POST">
             <label>Description:</label> <input type="text" name="desc"><br>
             <label>URL:</label> <input type="text" name="url"><br>
             <input type="submit"><input type="reset">
           `;
 
-    req.sendReply(200, 'text/html', makePage(user.id, out.getRaw()));
-    return true;
+    return r.reply(user.id, out.getRaw());
 }
 
 bool addBookmark(Request req) {
-    parms := QueryParmMap.getOrMake(req);
-    if (!parms) {
-        parms = parseQuery(req.contents);
-        parms.putIn(req);
-    }
+    r := RequestHelper(req, '/user');
     user := User.get(req);
-    url := parms.getSingle('url');
-    desc := parms.getSingle('desc');
-    if (!desc) {
-        req.sendReply(200, 'text/plain', 'Missing desc field');
-        return true;
-    }
-    if (!url) {
-        req.sendReply(200, 'text/plain', 'Missing url field');
-        return true;
-    }
+    url := r.getRequiredSingle('url');
+    if (!url) return true;
+    desc := r.getRequiredSingle('desc');
+    if (!desc) return true;
     data.addBookmark(user.id, desc, url);
-    req.sendRedirect(307, '/dweb/user');
+    req.sendRedirect(307, prefix + '/user?error=' + u('Added bookmark ' + desc));
     return true;
 }
 
@@ -127,7 +119,8 @@ disp['addBookmark'] = Chain![authHandler,
                              ];
 disp['login'] = LoginHandler(data.auth);
 disp['style.css'] = HandlerFunc(style);
-disp['admin'] = admin_registerAll(data, authHandler, '/dweb/admin');
+disp['admin'] = admin_registerAll(data, authHandler, prefix + '/admin');
+disp['list'] = checklist_registerAll(data, authHandler, prefix + '/list');
 
 server.addHandler(HandlerFunc(log));
 server.addHandler(disp);

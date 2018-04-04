@@ -7,6 +7,8 @@ import crack.lang cmp, makeHashVal;
 import crack.protobuf readMessageFromString, Field, Message, ProtoWriter;
 import kvjournal.kvdb DBIFace;
 
+import .html prefix;
+
 @import crack.ann impl;
 @import crack.protobuf.ann protobuf;
 
@@ -22,8 +24,8 @@ alias RandomNumberGenerator = Functor0[String];
 alias LoginURL = Functor1[String, String];
 
 String makeLoginURL(String path) {
-    return '/dweb/login?url=' +
-           (path.startsWith('/dweb/') ? path : '/dweb' + path);
+    return prefix + '/login?url=' +
+           (path.startsWith(prefix) ? path : prefix + path);
 }
 
 ## An AuthInfo implementation that reads and stores user and cookie

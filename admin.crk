@@ -5,7 +5,7 @@ import crack.http.core HandlerFunc, Request, RequestHandler;
 import crack.http.util parseQuery, Chain, PathDispatcher, PostHandler,
     QueryParmMap;
 import crack.lang KeyError;
-import .html makePage, u, HTMLFormatter, Raw;
+import .html u, HTMLFormatter, RequestHelper, Raw;
 import .data Data;
 
 ## The base prefix.
@@ -28,6 +28,7 @@ Raw buttonForm(String action, String text, String value) {
 }
 
 bool manageUsers(Request req) {
+    r := RequestHelper(req, '/manageUsers');
     out := HTMLFormatter();
     out `<h2>Users</h2>\n`;
     for (user :in data.iterUsers())
@@ -50,8 +51,7 @@ bool manageUsers(Request req) {
           </table>
         </form>
         `;
-    req.sendReply(200, 'text/html', makePage('manage users', out.getRaw()));
-    return true;
+    return r.reply('manage users', out.getRaw());
 }
 
 bool addUser(Request req) {
@@ -102,15 +102,16 @@ bool deleteUser(Request req) {
 }
 
 bool verifyAdmin(Request req) {
+    r := RequestHelper(req, '/error');
     if (User.get(req).id != 'mmuller') {
         req.sendReply(403, "text/html",
-                      makePage('unauthorized',
-                               Raw(I"<h1>Unauthorized</h1>
-                                     <p>Sorry, you don't have the necessary
-                                     privileges to access this resource.
-                                     "
-                                   )
-                               )
+                      r.makePage('unauthorized',
+                                 Raw(I"<h1>Unauthorized</h1>
+                                       <p>Sorry, you don't have the necessary
+                                       privileges to access this resource.
+                                       "
+                                     )
+                                 )
                       );
         return true;
     }
