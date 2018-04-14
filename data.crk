@@ -23,7 +23,24 @@ import .authdb AuthDBImpl, UserPB;
         optional string desc = 1;
         optional string url = 2;
     }
+
+    message Item {
+        optional string name = 1;
+        optional string order = 2;
+        optional string qty = 3;   # yarrrrr...
+        optional string units = 4;
+        optional int32 flags = 5;
+    }
+
+    message ShoppingList {
+        repeated Item items = 1;
+    }
 }
+
+## Selected means that the item is checked in a normal list, in a template it
+## means that that the item is "non-optional" (i.e. should be present in every
+## generated shopping list)
+const FLAG_SELECTED := 1;
 
 ## Iterator for objects in which the value is a Message type.
 class Iter[T] {
@@ -101,5 +118,31 @@ class Data {
     ## Iterate over users in order by id.
     Iter[UserPB] iterUsers() {
         return Iter[UserPB](users.iter());
+    }
+
+    ## Get the shopping list.
+    ShoppingList getList(String name) {
+        path := makePath('lists')/name;
+        if (path.exists()) {
+            list := ShoppingList();
+            readMessageFromString(list, path.readAll());
+            return list;
+        }
+        return null;
+    }
+
+    ## Store a shopping list.
+    void storeList(String name, ShoppingList list) {
+        path := makePath('lists');
+        path.makeDirs();
+        (path/name).writeAll(list.toString());
+    }
+
+    ## Returns a list of all list names.
+    Array[String] getLists() {
+        result := Array[String]();
+        for (child :in makePath('lists').children())
+            result.append(child.getName());
+        return result;
     }
 }

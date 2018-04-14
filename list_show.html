@@ -1,0 +1,29 @@
+<div ng-app="list_show" ng-controller="list_show_controller">
+    <h1>{{main.name}}</h1>
+
+    <div style="position: relative">
+        <input type="text" ng-change="entryChanged()" ng-model="text"
+               ng-keydown="specialKeys($event)"
+        ><br>
+        <div ng-show="matches.length > 0"
+             style="top: 40; left: 0; absolute: true;
+                    width: 100;
+                    position: absolute;
+                    background-color: black;
+                    border: true;
+                    auto: true;">
+            <div ng-repeat="match in matches"
+                 class="{{match.selected ? 'selected' : ''}}">
+                <p>{{match.name}}
+            </div>
+        </div>
+    </div>
+
+    <ul>
+        <li ng-repeat="item in main.items">
+            <input type="checkbox">
+            {{item.qty ? item.qty : ""}}
+            {{item.name}}
+    </ul>
+    <button ng-click="saveList()">Save List</button>
+</div>

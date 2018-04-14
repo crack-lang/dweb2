@@ -3,10 +3,13 @@
 ## In addition to the classes documented, this includes the "u" alias for
 ## encodeForURI().
 
+import crack.enc.json JSONParser, ParseException, UnexpectedToken;
 import crack.http.core Request;
 import crack.http.util encodeForURI, parseQuery, QueryParmMap, URI_QUERY_VAL;
 import crack.io FStr, StandardFormatter, StringFormatter, StringWriter;
 import crack.lang AppendBuffer;
+
+@import crack.ann assert;
 
 String prefix;
 
@@ -71,17 +74,27 @@ class RequestHelper {
     Request __req;
     String __errorURL;
     QueryParmMap __query;
+    bool __json;
+    Object __jsonObject;
 
     oper init(Request req, String errorURL) :
         __req = req,
         __errorURL = errorURL {
     }
 
+    ## Create a request helper.  This constructor includes the 'json' flag, if
+    ## set to true it processes contents as JSON instead of form field data.
+    oper init(Request req, String errorURL, bool json) :
+        __req = req,
+        __errorURL = errorURL,
+        __json = json {
+    }
+
     QueryParmMap __getQueryParms() {
         if (__query is null) {
             __query = QueryParmMap.getOrMake(__req);
 
-            if (__req.contents) {
+            if (!__json && __req.contents) {
                 query := parseQuery(__req.contents);
                 if (__query) {
                     # Merge with the query parms that came from the URL.
@@ -108,6 +121,31 @@ class RequestHelper {
         return true;
     }
 
+    ## Returns the json object obtained from the request.  Returns null and
+    ## sends a 200 response with a json error if a json object can't be parsed.
+    Object getJSONObject() {
+        @assert(__json);
+        if (__jsonObject is null) {
+            try {
+                __jsonObject = JSONParser().parse(__req.contents).result;
+            } catch (UnexpectedToken ex) {
+                __req.sendReply(200, 'application/json',
+                                '{"error": "Error parsing result (unexpected '
+                                 'token)."}'
+                                );
+                return null;
+            } catch (ParseException ex) {
+                __req.sendReply(200, 'application/json',
+                                '{"error": "Error parsing result (parse '
+                                 'exception)."}'
+                                );
+                return null;
+            }
+        }
+
+        return __jsonObject;
+    }
+
     ## Gets a single parameter.  Returns null if the parameter is not defined
     ## and produces an error result
     String getRequiredSingle(String parmName) {
@@ -116,6 +154,11 @@ class RequestHelper {
         if (result is null)
             error(FStr() `Missing parameter: $parmName`);
         return result;
+    }
+
+    ## Gets a single optional parameter, returns null if it is undefined.
+    String getOptionalSingle(String parmName) {
+        return __getQueryParms().getSingle(parmName);
     }
 
     ## Returns a raw, formatted error message.
@@ -127,8 +170,10 @@ class RequestHelper {
 
     ## Renders a standard DWeb page.  You should generall use reply() instead.
     ##
-    ## Both title and contents may safely be null.
-    Raw makePage(String title, Raw contents) {
+    ## scripts: set of script elements (or anything, really) to be embedded in
+    ##     the head element.
+    ## Title and contents, and scripts may safely be null.
+    Raw makePage(String title, Raw contents, Raw scripts) {
 
         query := __getQueryParms();
         error := query.getSingle('error');
@@ -136,8 +181,9 @@ class RequestHelper {
         out := HTMLFormatter();
         out I`<html>
                 <head>
-                <link rel="stylesheet" href="$prefix/style.css" type="text/css">
-                <title>dweb$(title ? '/' + title : ''))</title>
+                  <link rel="stylesheet" href="$prefix/style.css" type="text/css">
+                  <title>dweb$(title ? '/' + title : ''))</title>
+                  $(scripts ? scripts : Raw(''))
                 </head>
                 <body>
                 <div class="page">
@@ -166,9 +212,31 @@ class RequestHelper {
         return out.getRaw();
     }
 
+    ## Renders a standard DWeb page without
+    Raw makePage(String title, Raw contents) {
+        return makePage(title, contents, null);
+    }
+
     ## Send an HTML reply.
     bool reply(String title, Raw contents) {
         __req.sendReply(200, 'text/html', makePage(title, contents));
         return true;
     }
+
+    ## Send an HTML reply.
+    bool reply(String title, Raw contents, Raw scripts) {
+        __req.sendReply(200, 'text/html', makePage(title, contents, scripts));
+        return true;
+    }
+}
+
+## Return the script elements for an angular script running at 'url'.  This
+## includes the user's
+Raw makeAngular(String url) {
+    HTMLFormatter out = {};
+    out I`<script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.4.3/angular.min.js">
+          </script>
+          <script src="$url"></script>
+          `;
+    return out.getRaw();
 }

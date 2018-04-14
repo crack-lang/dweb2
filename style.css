@@ -136,3 +136,7 @@ div.bottombar {
     padding: 10;
     background-color: #111;
 }
+
+div.selected {
+  background-color: #444;
+}

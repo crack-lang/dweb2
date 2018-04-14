@@ -1,0 +1,58 @@
+## Tools for working with JSON.
+
+import crack.enc.json JSONArray, JSONFloat, JSONInt, JSONString, JSONObject;
+import crack.io FStr;
+import crack.lang AppendBuffer;
+
+String jsonString(Object o) {
+    return (o is null) ? String.cast(null, null) : String(JSONString.cast(o));
+}
+
+float jsonFloat(Object obj) {
+    if (obj is null)
+        return 0.0;
+
+    floatVal := JSONFloat.cast(obj, null);
+    if (floatVal)
+        return floatVal.value;
+
+    return float(JSONInt.cast(obj).value);
+}
+
+int jsonInt(Object obj) {
+    return (obj is null) ? 0.0 : JSONInt.cast(obj).value;
+}
+
+String escape(String val) {
+    AppendBuffer result = {val.count()};
+    for (int i = 0; i < val.count(); ++i) {
+
+        # Escape low and high ascii code right off the bat.
+        ch := val[i];
+        if (ch < 32 || ch > 127) {
+            result.append(b'\\');
+            result.append(b'0' + ch >> 6);
+            result.append(b'0' + (ch >> 3) & 7);
+            result.append(b'0' + ch & 7);
+            continue;
+        }
+
+        # Escape double quote and backslash.
+        if (ch == b'"' || ch == b'\\')
+            result.append(b'\\');
+        result.append(ch);
+    }
+    return String(result, true);
+}
+
+## Escape a string for json.
+String esc(String val) {
+    return escape(val);
+}
+
+String nullable(String val) {
+    if (val is null)
+        return 'null';
+    else
+        return FStr() `"$(escape(val))"`;
+}
