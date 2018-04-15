@@ -21,9 +21,15 @@
 
     <ul>
         <li ng-repeat="item in main.items">
-            <input type="checkbox">
+            <input type="checkbox" ng-model="item.selected">
             {{item.qty ? item.qty : ""}}
             {{item.name}}
     </ul>
-    <button ng-click="saveList()">Save List</button>
+    <div>
+        <button ng-click="saveList()">Save List</button>
+        <button ng-click="clearList()">Clear</button>
+        <button ng-click="expandTemplate()">Expand Template</button>
+        <button ng-click="removeUnselected()">Remove Unselected</button>
+        <p>My soul has no eyes.
+    </div>
 </div>
