@@ -238,4 +238,17 @@ angular.module("list_show", [])
 
             $scope.saveList();
         }
+
+        $scope.removeSelected = function(event) {
+            var curItems = $scope.main.items;
+            $scope.main.items = [];
+            for (var i = 0; i < curItems.length; ++i) {
+                var item = curItems[i];
+                if (!item.selected)
+                    $scope.main.items.push(item);
+            }
+
+            $scope.saveList();
+        }
+
     });
