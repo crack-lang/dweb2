@@ -98,9 +98,9 @@ bool addBookmark(Request req) {
     return true;
 }
 
-const STYLE := makePath('style.css').readAll();
+#const STYLE := makePath('style.css').readAll();
 bool style(Request req) {
-    req.sendReply(200, 'text/css', STYLE);
+    req.sendReply(200, 'text/css', makePath('style.css').readAll());
     return true;
 }
 

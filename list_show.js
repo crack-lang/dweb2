@@ -226,12 +226,12 @@ angular.module("list_show", [])
             $scope.saveList();
         };
 
-        $scope.removeUnselected = function(event) {
+        function filterAndSave(predicate) {
             var curItems = $scope.main.items;
             $scope.main.items = [];
             for (var i = 0; i < curItems.length; ++i) {
                 var item = curItems[i];
-                if (item.selected)
+                if (predicate(item))
                     $scope.main.items.push(item);
                 item.selected = false;
             }
@@ -239,16 +239,12 @@ angular.module("list_show", [])
             $scope.saveList();
         }
 
-        $scope.removeSelected = function(event) {
-            var curItems = $scope.main.items;
-            $scope.main.items = [];
-            for (var i = 0; i < curItems.length; ++i) {
-                var item = curItems[i];
-                if (!item.selected)
-                    $scope.main.items.push(item);
-            }
+        $scope.removeUnselected = function(event) {
+            filterAndSave(function(item) { return item.selected });
+        }
 
-            $scope.saveList();
+        $scope.removeSelected = function(event) {
+            filterAndSave(function(item) { return !item.selected });
         }
 
     });
