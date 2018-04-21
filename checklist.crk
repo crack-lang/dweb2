@@ -1,0 +1,232 @@
+
+import crack.cont.array Array;
+import crack.enc.json JSONArray, JSONObject;
+import crack.fs makePath;
+import crack.hash.sha256 SHA256;
+import crack.http.auth AuthHandler;
+import crack.http.core HandlerFunc, Request, RequestHandler;
+import crack.http.util Chain, MethodHandler, PathDispatcher,
+    PostRequestHandler, QueryParmMap;
+import crack.io cerr, FStr, StringFormatter;
+import .data Data, ItemPB = Item, ShoppingList, FLAG_SELECTED;
+import .html makeAngular, u, HTMLFormatter, Raw, RequestHelper;
+import .json esc, jsonFloat, jsonInt, jsonString, nullable;
+
+# Prefix for all of these pages.
+String pfx;
+
+Data data;
+
+## Items are presumed to be immutable.  They are stored as list/item/<digest>.
+class Item {
+    String __digest;
+    ItemPB __data;
+    String __dataString;
+
+    ## Construct from a raw protobuf object.  This clones the original
+    ## protobuf.
+    oper init(ItemPB data) : __data = data.clone() {}
+
+    String toString() {
+        if (__dataString is null)
+            __dataString = __data.toString();
+        return __dataString;
+    }
+
+    ## Returns the underlying protobuf.
+    ItemPB getPB() { return __data }
+
+    String getDigest() {
+        if (!__digest) {
+            hasher := SHA256();
+            hasher.update(toString());
+            __digest = hasher.digest();
+        }
+        return __digest;
+    }
+
+    ## Get a clone of the raw protobuf.
+    ItemPB getPB() {
+        return __data.clone();
+    }
+
+    String getName() { return __data.name }
+    void setName(String name) { __data.name = name }
+    String getOrder() { return __data.order }
+    void setOrder(String order) { __data.order = order }
+
+    float getQty() {
+        if (!__data.qty)
+            return 0;
+        return array[float32](__data.qty.buffer)[0];
+    }
+
+    void setQty(float val) {
+        buf := array[float32](1);
+        buf[0] = float32(val);
+        __data.qty = String(byteptr(buf), 4, true);
+    }
+
+    String getUnits() { return __data.units }
+    void setUnits(String units) { __data.units = units }
+    int getFlags() { return __data.flags }
+    void setFlags(int flags) { __data.flags = int32(flags) }
+    bool isSelected() { return __data.flags & FLAG_SELECTED }
+    void setSelected(bool selected) {
+        __data.flags |= int32(selected ? FLAG_SELECTED : 0);
+    }
+}
+
+bool list(Request req) {
+    r := RequestHelper(req, '/');
+    listName := r.getRequiredSingle('name');
+    if (listName is null)
+        return true;
+    out := HTMLFormatter();
+
+    list := data.getList(listName);
+    if (!list)
+        return r.error(FStr() `list $listName not found`);
+
+    out `<form method="$pfx/saveList">\n`;
+    for (item :in list.items) {
+        i := Item(item);
+        out I`<input type="checkbox" name="$(i.getDigest())" \
+               $((i.getFlags() & FLAG_SELECTED) ? 'checked' : '')>\
+              <label>$(item.name)</label><br>\n`;
+    }
+    out I`<input type="hidden" name="list" value="$(listName)">
+          <input type="submit">
+          </form>
+          `;
+    return r.reply('list/' + listName, out.getRaw());
+}
+
+bool saveList(Request req) {
+    req.sendReply(200, 'text/plain', 'not implemented');
+    return true;
+}
+
+bool showLists(Request req) {
+    r := RequestHelper(req, '/');
+    out := HTMLFormatter();
+
+    out `<h1>Lists</h1>
+         <ul>
+         `;
+
+    for (listName :in data.getLists())
+        out `<li><a href="$pfx/list/list?name=$(u(listName))">$listName</a>\n`;
+    out `</ul>\n`;
+
+    return r.reply('list/all', out.getRaw());
+}
+
+bool angular(Request req) {
+    r := RequestHelper(req, '/');
+    return r.reply('list/angular', Raw(makePath('angular.html').readAll()),
+                   makeAngular('script.js'));
+}
+
+bool script(Request req) {
+    req.sendReply(200, 'text/javascript', makePath('script.js').readAll());
+    return true;
+}
+
+bool foo(Request req) {
+    req.sendReply(200, 'text/javascript',
+                  '{"foo": 100, "bar": "bar val"}'
+                  );
+    return true;
+}
+
+bool get(Request req) {
+    r := RequestHelper(req, '/');
+    name := r.getRequiredSingle('name');
+    if (name is null)
+        return true;
+    list := data.getList(name);
+    if (list is null) {
+        # Create an empty list.
+        list = ShoppingList();
+        list.items = Array[ItemPB]();
+#        req.sendReply(404, 'text/plain', 'Invalid list name');
+    }
+
+    out := StringFormatter();
+    out `{"name": "$(esc(name))", "items": [`;
+    bool notFirst;
+    if (list.items) {
+        for (i :in list.items) {
+            item := Item(i);
+            if (notFirst)
+                out `,`;
+            else
+                notFirst = true;
+            out I`{"name": "$(esc(item.getName()))", \
+                "order": $(nullable(item.getOrder())), \
+                "qty": $(item.getQty()), \
+                "units": $(nullable(item.getUnits())), \
+                "flags": $(item.getFlags()) \
+                }`;
+        }
+    }
+    out `]}`;
+    req.sendReply(200, 'application/json', out.string());
+    return true;
+}
+
+bool put(Request req) {
+    r := RequestHelper(req, '/', true);
+    name := r.getRequiredSingle('name');
+    obj := r.getJSONObject();
+    if (obj is null)
+        return true;
+
+    # Convert to a protobuf and store.
+    o := JSONObject.cast(obj);
+    list := ShoppingList();
+    for (i :in JSONArray.cast(o['items'])) {
+        jsonItem := JSONObject.cast(i);
+        item := Item(ItemPB());
+        item.setName(jsonString(jsonItem['name']));
+        item.setOrder(jsonString(jsonItem['order']));
+        item.setQty(jsonFloat(jsonItem['qty']));
+        item.setUnits(jsonString(jsonItem['units']));
+        item.setFlags(jsonInt(jsonItem['flags']));
+        list.items_append(item.getPB());
+    }
+    data.storeList(name, list);
+
+    return true;
+}
+
+bool show(Request req) {
+    r := RequestHelper(req, '/');
+    r.reply('list/show', Raw(makePath('list_show.html').readAll()),
+            makeAngular('list_show.js')
+            );
+    return true;
+}
+
+bool showJs(Request req) {
+    req.sendReply(200, 'text/javascript', makePath('list_show.js').readAll());
+    return true;
+}
+
+RequestHandler registerAll(Data data_, AuthHandler authHandler, String prefix) {
+    data = data_;
+    disp := PathDispatcher();
+    disp['list'] = MethodHandler('GET', list);
+    disp['all'] = MethodHandler('GET', showLists);
+    disp['angular'] = MethodHandler('GET', angular);
+    disp['script.js'] = MethodHandler('GET', script);
+    disp['foo'] = MethodHandler('GET', foo);
+    disp['get'] = MethodHandler('GET', get);
+    disp['put'] = MethodHandler('PUT', PostRequestHandler(put));
+    disp['show'] = MethodHandler('GET', show);
+    disp['list_show.js'] = MethodHandler('GET', showJs);
+    pfx = prefix;
+
+    return Chain![authHandler, disp];
+}
