@@ -44,13 +44,84 @@ angular.module("list_show", [])
         function clearMatches() {
             $scope.matches = [];
             $scope.selection = -1;
+            $scope.qty = '';
         }
 
         function clone(obj) {
             return JSON.parse(JSON.stringify(obj));
         }
 
+        // Parse the contents of the quantity field.
+        // Returns {"qty": float, "units": str}
+        function processQty() {
+            if ($scope.qty && $scope.qty.length > 0) {
+                var m = $scope.qty.match(/^(\d+(\.\d+)?)\s*(\S*)/);
+                if (m) {
+                    var units = m[3].length > 0 ? m[3] : null;
+                    return {'qty': parseFloat(m[1]), 'units': units};
+                } else {
+                    alert("invalid quantity");
+                }
+            }
+        }
+
         var FLAG_SELECTED = 1;
+
+        function processEnterKey(event) {
+            // Enter.
+            event.preventDefault();
+
+            // Process the quantity field.
+            var qty = processQty();
+
+            // Try to find the name in the main list.
+            var item;
+            var i;
+            for (i = 0; i < $scope.main.items.length; ++i) {
+                item = $scope.main.items[i];
+                if (item.name == $scope.text)
+                    break;
+            }
+            if (i != $scope.main.items.length) {
+                // Found it, make sure that the units are the same...
+                if (item.units && qty && qty.units != item.units) {
+                    alert('Units must match existing item.');
+                    return false;
+                }
+                if (qty && item.qty)
+                    item.qty += qty.qty;
+                else if (item.qty) {
+                    alert('Must specify a quantity for item that already has one'
+                          + i);
+                    return;
+                }
+                clearMatches();
+                $scope.text = '';
+                return;
+            }
+
+            // Try to find the text in the template or quit.
+            for (i = 0; i < $scope.template.items.length; ++i) {
+                item = $scope.template.items[i];
+                if (item.name == $scope.text)
+                    break;
+            }
+            if (i == $scope.template.items.length)
+                return false;
+
+            item = clone(item);
+            item.selected = false;
+            if (qty) {
+                item.qty = qty.qty;
+                item.units = qty.units;
+            }
+
+            $scope.main.items.push(item)
+            clearMatches();
+            $scope.text = '';
+            return false;
+            // XXX insert into the main list.
+        }
 
         $scope.specialKeys = function(event) {
             if (event.keyCode == 9 && $scope.matches.length > 0) {
@@ -90,25 +161,14 @@ angular.module("list_show", [])
                 item.selected = true;
                 return false;
             } else if (event.keyCode == 13) {
-                // Enter.
-                event.preventDefault();
+                processEnterKey(event);
+            }
+        };
 
-                // Try to find the text or quit.
-                var item;
-                var i;
-                for (i = 0; i < $scope.template.items.length; ++i) {
-                    item = $scope.template.items[i];
-                    if (item.name == $scope.text)
-                        break;
-                }
-                if (i == $scope.template.items.length)
-                    return false;
-
-                $scope.main.items.push(clone(item))
-                clearMatches();
-                $scope.text = '';
-                return false;
-                // XXX insert into the main list.
+        // Special keys for the quantity entryfield.
+        $scope.qtySpecialKeys = function(event) {
+            if (event.keyCode == 13) {
+                processEnterKey(event);
             }
         };
 
@@ -135,12 +195,14 @@ angular.module("list_show", [])
         $scope.expandTemplate = function(event) {
             var curItems = $scope.main.items;
 
+            // If 'name' is in the main list, returns the item from the main
+            // list.
             function inCurItems(name) {
                 for (var i = 0; i < curItems.length; ++i) {
                     if (curItems[i].name == name)
-                        return true;
+                        return curItems[i];
                 }
-                return false;
+                return null;
             }
 
             // copy everything from the template that is either marked as
@@ -149,9 +211,14 @@ angular.module("list_show", [])
             $scope.main.items = [];
             for (var i = 0; i < $scope.template.items.length; ++i) {
                 var item = $scope.template.items[i];
-                if (item.flags & FLAG_SELECTED || inCurItems(item.name)) {
+                var curItem = inCurItems(item.name);
+                if (item.flags & FLAG_SELECTED || curItem) {
                     item = clone(item);
                     item.selected = false;
+                    if (curItem) {
+                        item.qty = curItem.qty;
+                        item.units = curItem.units;
+                    }
                     $scope.main.items.push(item);
                 }
             }

@@ -4,7 +4,10 @@
     <div style="position: relative">
         <input type="text" ng-change="entryChanged()" ng-model="text"
                ng-keydown="specialKeys($event)"
-        ><br>
+        >
+        Qty:
+        <input type="text" ng-model=qty size="5"
+               ng-keydown="qtySpecialKeys($event)">
         <div ng-show="matches.length > 0"
              style="top: 40; left: 0; absolute: true;
                     width: 100;
@@ -23,6 +26,7 @@
         <li ng-repeat="item in main.items">
             <input type="checkbox" ng-model="item.selected">
             {{item.qty ? item.qty : ""}}
+            {{item.units}}
             {{item.name}}
     </ul>
     <div>
