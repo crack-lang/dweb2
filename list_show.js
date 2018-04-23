@@ -5,7 +5,7 @@ angular.module("list_show", [])
         $scope.matches = [];
         $scope.selection = -1;
 
-        $http.get('/list/get?name=mainlist')
+        $http.get(PREFIX + '/list/get?name=mainlist')
             .then(function(response) {
                 $scope.main = response.data;
 
@@ -17,7 +17,7 @@ angular.module("list_show", [])
                 }
             });
 
-        $http.get('/list/get?name=template')
+        $http.get(PREFIX + '/list/get?name=template')
             .then(function(response) {
                 $scope.template = response.data;
             });
@@ -181,7 +181,7 @@ angular.module("list_show", [])
                 item.flags = item.selected ? FLAG_SELECTED : 0;
             }
 
-            $http.put('/list/put?name=mainlist', $scope.main)
+            $http.put(PREFIX + '/list/put?name=mainlist', $scope.main)
                 .then(function() {
                       alert('List saved.');
                 });
