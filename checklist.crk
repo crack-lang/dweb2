@@ -197,6 +197,7 @@ bool put(Request req) {
         list.items_append(item.getPB());
     }
     data.storeList(name, list);
+    req.sendReply(200, 'application/json', '{}');
 
     return true;
 }
