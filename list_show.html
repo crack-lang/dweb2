@@ -17,7 +17,7 @@
                     auto: true;">
             <div ng-repeat="match in matches"
                  class="{{match.selected ? 'selected' : ''}}">
-                <p>{{match.name}}
+                <a href ng-click="matchSelected(match.name)">{{match.name}}</a>
             </div>
         </div>
     </div>

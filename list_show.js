@@ -247,4 +247,10 @@ angular.module("list_show", [])
             filterAndSave(function(item) { return !item.selected });
         }
 
+        // Called when a matching entry is selected from the dropdown.
+        $scope.matchSelected = function(name) {
+            $scope.text = name;
+            $scope.matches = [];
+        }
+
     });
