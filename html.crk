@@ -182,7 +182,7 @@ class RequestHelper {
         out I`<html>
                 <head>
                   <link rel="stylesheet" href="$prefix/style.css" type="text/css">
-                  <title>dweb$(title ? '/' + title : ''))</title>
+                  <title>dweb$(title ? '/' + title : '')</title>
                   <script>var PREFIX = "$prefix";</script>
                   $(scripts ? scripts : Raw(''))
                 </head>
