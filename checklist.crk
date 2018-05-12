@@ -1,7 +1,7 @@
 
 import crack.cont.array Array;
 import crack.enc.json JSONArray, JSONObject;
-import crack.fs makePath;
+import crack.fs makePath, Path;
 import crack.hash.sha256 SHA256;
 import crack.http.auth AuthHandler;
 import crack.http.core HandlerFunc, Request, RequestHandler;
@@ -202,10 +202,10 @@ bool put(Request req) {
     return true;
 }
 
-bool show(Request req) {
+bool template(Request req) {
     r := RequestHelper(req, '/');
-    r.reply('list/show', Raw(makePath('list_show.html').readAll()),
-            makeAngular('list_show.js')
+    r.reply('list/show', Raw(makePath('template_edit.html').readAll()),
+            makeAngular('template_edit.js')
             );
     return true;
 }
@@ -213,6 +213,51 @@ bool show(Request req) {
 bool showJs(Request req) {
     req.sendReply(200, 'text/javascript', makePath('list_show.js').readAll());
     return true;
+}
+
+bool template_edit_js(Request req) {
+    req.sendReply(200, 'text/javascript', makePath('template_edit.js').readAll());
+    return true;
+}
+
+## A handler for generated pages whose primary contents are in an HTML file
+## backed by an angular module.
+class AngularPageHandler : MethodHandler {
+    Path path;
+    String angularScript;
+    String title;
+
+    oper init(String path, String angularScript, String title) :
+        MethodHandler('GET', this),
+        path = makePath(path),
+        angularScript = angularScript,
+        title = title {
+    }
+
+    bool oper call(Request req) {
+        r := RequestHelper(req, '/');
+        r.reply(title, Raw(path.readAll()),
+                makeAngular(angularScript)
+                );
+        return true;
+    }
+}
+
+## A handler for endpoints that are served directly from a file.
+class StaticContentHandler : MethodHandler {
+    String mimeType;
+    Path path;
+
+    oper init(String mimeType, String path) :
+        MethodHandler('GET', this),
+        mimeType = mimeType,
+        path = makePath(path) {
+    }
+
+    bool oper call(Request req) {
+        req.sendReply(200, mimeType, path.readAll());
+        return true;
+    }
 }
 
 RequestHandler registerAll(Data data_, AuthHandler authHandler, String prefix) {
@@ -225,8 +270,16 @@ RequestHandler registerAll(Data data_, AuthHandler authHandler, String prefix) {
     disp['foo'] = MethodHandler('GET', foo);
     disp['get'] = MethodHandler('GET', get);
     disp['put'] = MethodHandler('PUT', PostRequestHandler(put));
-    disp['show'] = MethodHandler('GET', show);
+    disp['show'] = AngularPageHandler('list_show.html', 'list_show.js',
+                                      'list/show'
+                                      );
     disp['list_show.js'] = MethodHandler('GET', showJs);
+    disp['template'] =
+        AngularPageHandler('template_edit.html', 'template_edit.js',
+                           'list/show'
+                           );
+    disp['template_edit.js'] =
+        StaticContentHandler('text/javascript', 'template_edit.js');
     pfx = prefix;
 
     return Chain![authHandler, disp];
