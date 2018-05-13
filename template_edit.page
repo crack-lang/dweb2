@@ -1,17 +1,23 @@
-<div ng-app="template_edit" ng-controller="template_edit_controller">
+title:
+    list/template
+scripts:
+    <script src="template_edit.js"></script>
+attrs:
+    ng-app="template_edit" ng-controller="template_edit_controller"
+body:
     <h1>{{main.name}}</h1>
 
     <div style="position: relative">
         <input type="text" ng-change="entryChanged()" ng-model="text"
-               ng-keydown="specialKeys($event)">
+            ng-keydown="specialKeys($event)">
     </div>
 
     <table>
         <th><td>Default</td><td>name</td></th>
         <tr ng-repeat="item in main.items">
             <td><input type="checkbox"
-                       ng-click="$parent.gotSelections = checkForSelections()"
-                       ng-model="item.selected"></td>
+                    ng-click="$parent.gotSelections = checkForSelections()"
+                    ng-model="item.selected"></td>
             <td><input type="checkbox" ng-model="item.defaulted"></td>
             <td>{{item.name}}</td>
             <td><button ng-click="upItem(item.name)">
@@ -20,10 +26,10 @@
                 {{gotSelections ?  "below" : "down"}}</button>
         </tr>
     </table>
+static:
     <div>
         <button ng-click="saveList()">Save List</button>
         <button ng-click="removeSelected()">Remove Selected</button>
         <button ng-click="clearSelections()">Clear Selections</button>
         <p><a href="show">Main List</a>
     </div>
-</div>

@@ -1,4 +1,5 @@
 
+import crack.ascii strip;
 import crack.cont.array Array;
 import crack.enc.json JSONArray, JSONObject;
 import crack.fs makePath, Path;
@@ -8,9 +9,15 @@ import crack.http.core HandlerFunc, Request, RequestHandler;
 import crack.http.util Chain, MethodHandler, PathDispatcher,
     PostRequestHandler, QueryParmMap;
 import crack.io cerr, FStr, StringFormatter;
+import crack.io.readers LineReader;
+import crack.lang AppendBuffer;
+import crack.logger warn;
+
 import .data Data, ItemPB = Item, ShoppingList, FLAG_SELECTED;
 import .html makeAngular, u, HTMLFormatter, Raw, RequestHelper;
 import .json esc, jsonFloat, jsonInt, jsonString, nullable;
+
+@import crack.ann assert;
 
 # Prefix for all of these pages.
 String pfx;
@@ -223,22 +230,91 @@ bool template_edit_js(Request req) {
 ## A handler for generated pages whose primary contents are in an HTML file
 ## backed by an angular module.
 class AngularPageHandler : MethodHandler {
-    Path path;
+    Path sourceFile;
+
     String angularScript;
     String title;
+    String parcelAttrs;
+    String contents;
+    String staticRow;
 
-    oper init(String path, String angularScript, String title) :
+    ## Construct from a single source file.
+    oper init(String sourceFile) :
         MethodHandler('GET', this),
-        path = makePath(path),
-        angularScript = angularScript,
-        title = title {
+        sourceFile = makePath(sourceFile) {
+    }
+
+    ## Populates the content handler out of the source file.
+    ## File format consists of yaml like sections:
+    ##  title: Page title.  Trailing and leading whitespace are stripped.
+    ##  scripts: Script elements to be placed in the <head> section.
+    ##  atts: Attributes to add to the div element in the body.  Trailing an
+    ##      leading whitespace are stripped.
+    ##  body: Main body in the scrollable page.
+    ##  static: Elements to be placed in the static row at the bottom of the
+    ##      pages.
+    ## Each section should be left-aligned (no space between the
+    ## beginning-of-line and first character) and followed by indented
+    ## contents (indented by a space, not tab or any other whitespace).
+    ## Indentation of contents is currently preserved, but may eventu1ally be
+    ## truncated to the indentation level of the least indented line.
+    void load() {
+        src := LineReader(sourceFile.reader());
+        curSection := AppendBuffer(1024);
+        String sectionName;
+
+        # Clear all existing fields.
+        title = null;
+        angularScript = null;
+        parcelAttrs = null;
+        contents = null;
+        staticRow = null;
+
+        void storeSection(AngularPageHandler obj, String sectionName,
+                          AppendBuffer curSection
+                          ) {
+            data := String(curSection, true);
+            if (sectionName == 'title:')
+                obj.title = strip(data);
+            else if (sectionName == 'scripts:')
+                obj.angularScript = data;
+            else if (sectionName == 'attrs:')
+                obj.parcelAttrs = strip(data);
+            else if (sectionName == 'body:')
+                obj.contents = data;
+            else if (sectionName == 'static:')
+                obj.staticRow = data;
+            else
+                warn `Unknown section: $sectionName in file $(obj.sourceFile)`;
+        }
+
+        for (line :in src) {
+            if (line.startsWith(' ') || line == '\n') {
+                curSection.extend(line);
+                continue;
+            } else {
+                # No leading space, this is a section header.
+                if (curSection)
+                    storeSection(this, sectionName, curSection);
+                sectionName = strip(line);
+            }
+        }
+
+        # Store the last section.
+        if (sectionName)
+            storeSection(this, sectionName, curSection);
     }
 
     bool oper call(Request req) {
         r := RequestHelper(req, '/');
-        r.reply(title, Raw(path.readAll()),
-                makeAngular(angularScript)
-                );
+        load();
+
+        r.contents = Raw(contents);
+        r.title = title;
+        r.scripts = Raw(angularScript);
+        r.parcelAttrs = Raw(parcelAttrs);
+        r.staticRow = Raw(staticRow);
+        r.reply();
         return true;
     }
 }
@@ -270,14 +346,9 @@ RequestHandler registerAll(Data data_, AuthHandler authHandler, String prefix) {
     disp['foo'] = MethodHandler('GET', foo);
     disp['get'] = MethodHandler('GET', get);
     disp['put'] = MethodHandler('PUT', PostRequestHandler(put));
-    disp['show'] = AngularPageHandler('list_show.html', 'list_show.js',
-                                      'list/show'
-                                      );
+    disp['show'] = AngularPageHandler('list_show.page');
     disp['list_show.js'] = MethodHandler('GET', showJs);
-    disp['template'] =
-        AngularPageHandler('template_edit.html', 'template_edit.js',
-                           'list/show'
-                           );
+    disp['template'] = AngularPageHandler('template_edit.page');
     disp['template_edit.js'] =
         StaticContentHandler('text/javascript', 'template_edit.js');
     pfx = prefix;

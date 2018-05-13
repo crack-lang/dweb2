@@ -77,6 +77,27 @@ class RequestHelper {
     bool __json;
     Object __jsonObject;
 
+    # Public attributes.
+
+    ## Page title.  Required unless you're using the three or two argument
+    ## makePage().
+    String title;
+
+    ## Page contents.  Required unless you're using the three or two argument
+    ## makePage().
+    Raw contents;
+
+    ## Scripts to be injected in the head section.
+    Raw scripts;
+
+    ## If present, this is HTML to embed in the static "hud" on the bottom of
+    ## the page.
+    Raw staticRow;
+
+    ## If present, these are attributes to embed in the main <div> tag within
+    ## the page body.
+    Raw parcelAttrs;
+
     oper init(Request req, String errorURL) :
         __req = req,
         __errorURL = errorURL {
@@ -178,15 +199,23 @@ class RequestHelper {
         query := __getQueryParms();
         error := query.getSingle('error');
 
+        # Add the angular script if there are any other scripts (not too happy
+        # about this part).
+        allScripts := scripts ?
+            Raw('<script src="https://ajax.googleapis.com/ajax/libs/'
+                'angularjs/1.4.3/angular.min.js"></script>' + scripts
+                ) :
+            Raw('');
+
         out := HTMLFormatter();
         out I`<html>
                 <head>
                   <link rel="stylesheet" href="$prefix/style.css" type="text/css">
                   <title>dweb$(title ? '/' + title : '')</title>
                   <script>var PREFIX = "$prefix";</script>
-                  $(scripts ? scripts : Raw(''))
+                  $allScripts
                 </head>
-                <body>
+                <body $(parcelAttrs ? parcelAttrs : Raw(''))>
                 <div class="page">
                     <div class="scrollpane">
 
@@ -204,6 +233,7 @@ class RequestHelper {
 
                     <div class="bottombar">
                         <span><a href="$prefix/">DWeb root</a></span>
+                        $(staticRow ? staticRow : Raw(''))
                     </div>
 
                 </div>
@@ -218,6 +248,10 @@ class RequestHelper {
         return makePage(title, contents, null);
     }
 
+    Raw makePage() {
+        return makePage(title, contents, scripts);
+    }
+
     ## Send an HTML reply.
     bool reply(String title, Raw contents) {
         __req.sendReply(200, 'text/html', makePage(title, contents));
@@ -227,6 +261,12 @@ class RequestHelper {
     ## Send an HTML reply.
     bool reply(String title, Raw contents, Raw scripts) {
         __req.sendReply(200, 'text/html', makePage(title, contents, scripts));
+        return true;
+    }
+
+    ## Send a reply given attributes collected by the request.
+    bool reply() {
+        __req.sendReply(200, 'text/html', makePage());
         return true;
     }
 }
