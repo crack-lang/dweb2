@@ -1,0 +1,279 @@
+
+@import crack.imports1_5 auto_import; @auto_import
+import crack.logger.ctx Log;
+@import crack.ann assert, cvars, impl;
+
+class Header {
+    @cvars {
+        String name;
+        String value;
+    }
+
+    void formatTo(Formatter out) {
+        out `$name: $value\r\n`;
+    }
+}
+
+## Request/response data.
+class _RequestData {
+    Array[Header] headers = {};
+    String body;
+
+    ## Returns the value of the specified header or null if the header isn't
+    ## defined.  Header name matches are case-insensitive.
+    String getHeader(String name) {
+        nm := toLower(name);
+        for (header :in headers) {
+            if (toLower(header.name) == nm)
+                return header.value;
+        }
+
+        return null;
+    }
+
+    void finish() {
+        if (body) {
+            lengthHeader := getHeader('content-length');
+            if (lengthHeader) {
+                @assert(parseInt(lengthHeader) == body.size);
+            } else {
+                headers.append(Header('Content-length',
+                                      FStr() `$(body.size)`
+                                      )
+                               );
+            }
+        }
+    }
+
+    void formatTo(Formatter out) {
+        for (header :in headers)
+            out `$header`;
+        out.write('\r\n');
+        if (body)
+            out.write(body);
+    }
+}
+
+class Request : _RequestData {
+    @cvars {
+        ## GET, POST, whatever...
+        String method;
+
+        ## Request path.
+        String path;
+    }
+
+    void formatTo(Formatter out) {
+        out `$method $path HTTP/1.1\r\n`;
+        _RequestData.formatTo(out);
+    }
+}
+
+class Response : _RequestData {
+    @cvars {
+        int status;
+        String message;
+    }
+
+    void formatTo(Formatter out) {
+        out `HTTP/1.1 $status $message\r\n`;
+        _RequestData.formatTo(out);
+    }
+}
+
+class MalformedResponse : Exception {}
+class ConnectionTerminated : Exception {}
+
+class HTTPHandler @impl CommUserHandler {
+    CommWaiterFor[Response, int] waiter;
+    int state;
+    Response response;
+    AppendBuffer body;
+
+    ## Bytes remaining in the body (this gets set when we get a content-length
+    ## header)
+    int remaining;
+
+    @final void reset() {
+        waiter = null;
+        state = 0;
+        response = null;
+        body = null;
+        remaining = 0;
+    }
+
+    ## Gets the next full line (stripped of CRLF) and removes the line
+    ## (including the CRLF) from the buffer.
+    String getLine(AppendBuffer buf) {
+        pos := buf.lfind(b'\n');
+        if (pos == -1)
+            return null;
+
+        # There should always be a carriage return, but deal with lines that
+        # don't have one.
+        String result;
+        if (pos > 0 && buf[pos - 1] == b'\r')
+            result = String(buf, pos - 1, false);
+        else
+            result = String(buf, pos, false);
+
+        buf.compact(pos + 1);
+        return result;
+    }
+
+    bool processResponseLine(String line) {
+        cerr `xxx line is $line\n`;
+        # Skip the version, get the result code.
+        start := line.lfind(b' ');
+        end := line.lfind(b' ', start + 1);
+        if (start == -1 || end == -1) {
+            if (waiter)
+                waiter.setError(MalformedResponse());
+            waiter = null;
+            return false;
+        }
+
+        response = Response(parseInt(line.slice(start + 1, end)),
+                            line.slice(end + 1)
+                            );
+        return true;
+    }
+
+    bool processHeaderLine(String line) {
+        cerr `xxx header line: $line\n`;
+        colon := line.lfind(b':');
+        if (colon == -1) {
+            waiter.setError(MalformedResponse());
+            waiter = null;
+            return false;
+        }
+
+        # Pass the space if there is one (there should be).
+        valStart := colon + 1;
+        if (line.size > valStart && line[valStart] == b' ')
+            ++valStart;
+
+        name := line.substr(0, colon);
+        val := line.substr(valStart);
+        response.headers.append(Header(name, val));
+        if (toLower(name) == 'content-length') {
+            remaining = parseInt(val);
+            body = AppendBuffer(remaining);
+        }
+        return true;
+    }
+
+    void process(CommConnection conn) {
+        const int NEW = 0, HEADER = 1, BODY = 2;
+        while (true) {
+            if (state == NEW || state == HEADER) {
+                if ((line := getLine(conn.inBuf)) != null) {
+                    if (state == NEW) {
+                        if (!processResponseLine(line)) {
+                            conn.close();
+                            break;
+                        }
+                        state = HEADER;
+                    } else {
+                        # State is HEADER
+                        if (!line) {
+                            # Empty line, transition to the body.
+                            state = BODY;
+                            if (remaining) {
+                                body = AppendBuffer(remaining);
+                            } else {
+                                # No contents, so finish.
+                                waiter.setResult(response);
+                                reset();
+                            }
+                        } else if (!processHeaderLine(line)) {
+                            conn.close();
+                            break;
+                        }
+                    }
+                } else {
+                    # We don't have a complete line.
+                    break;
+                }
+            } else {
+                # Processing the body, add the entire buffer to the result.
+                if (conn.inBuf.size > remaining) {
+                    body.extend(Buffer(conn.inBuf.buffer, remaining));
+                    conn.inBuf.compact(remaining);
+                    remaining = 0;
+                } else {
+                    body.extend(conn.inBuf);
+                    remaining -= conn.inBuf.size;
+                    conn.inBuf.size = 0;
+                }
+
+                # If we've finished reading the body, finish the request.
+                if (!remaining) {
+                    response.body = String(body, true);
+                    waiter.setResult(response);
+                    reset();
+                }
+
+                # We should have consumed the entire body now.
+                break;
+            }
+        }
+    }
+
+    void terminate(CommConnection comm) {
+        if (waiter)
+            waiter.setError(ConnectionTerminated());
+        logInfo `connection closed`;
+    }
+
+    void addResponder(Object responder) {
+        waiter = CommWaiterFor[Response, int].cast(responder);
+    }
+}
+
+
+class HTTPClient {
+    @cvars {
+        SyncCommProxy __proxy;
+    }
+
+    Response send(String rawRequest) {
+        waiter := CommWaiterFor[Response, int](0);
+        __proxy.sendSync(rawRequest, waiter);
+        return waiter.getResult();
+    }
+
+    Response send(Request req) {
+        waiter := CommWaiterFor[Response, int](0);
+        __proxy.sendSync(FStr() `$req`, waiter);
+        return waiter.getResult();
+    }
+}
+
+if (false) {
+    import crack.io cout;
+    #request := Request('GET', '/');
+    #content := 'this is a test';
+    #request.headers.append(Header('Host', 'example.com'));
+    #request.headers.append(Header('Content-type', 'text/plain'));
+    #request.body = content;
+    #request.finish();
+    #cout `$request`;
+
+    comm := Comm(Log(cerr, cerr, cerr, cerr, cerr, 'comm'));
+    comm.start();
+    addrs := resolve('localhost');
+    addr := InetAddress.cast(addrs[0]);
+    client := HTTPClient(comm.getSyncProxy(InetAddress(addr, 1921), HTTPHandler()));
+    req := Request('GET', '/');
+    req.headers.append(Header('host', '0x0x.dev'));
+    resp := client.send(req);
+    cout `$resp\n`;
+    cout `==== and we're out!\n`;
+
+    req = Request('GET', '/style.css');
+    req.headers.append(Header('host', '0x0x.dev'));
+    cout `$(client.send(req))\n`;
+}
+
+
