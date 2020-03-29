@@ -17,6 +17,7 @@ import .data Bookmark, Data;
 import .html prefix, u, HTMLFormatter, Raw, RequestHelper;
 import .admin admin_registerAll = registerAll;
 import .checklist checklist_registerAll = registerAll;
+import .clipboard clipboard_registerAll = registerAll;
 
 @import crack.ann implements;
 
@@ -121,6 +122,7 @@ disp['login'] = LoginHandler(data.auth);
 disp['style.css'] = HandlerFunc(style);
 disp['admin'] = admin_registerAll(data, authHandler, prefix + '/admin');
 disp['list'] = checklist_registerAll(data, authHandler, prefix + '/list');
+disp['clip'] = Chain![authHandler, clipboard_registerAll()];
 
 server.addHandler(HandlerFunc(log));
 server.addHandler(disp);

@@ -39,6 +39,11 @@ input {
     background-color: #111;
 }
 
+textarea {
+    color: #0ff;
+    background-color: #000;
+}
+
 input[type=submit],input[type=reset],input[type=button] {
     border-bottom: 4px solid black;
     border-right: 4px solid black;

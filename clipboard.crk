@@ -1,0 +1,49 @@
+
+import crack.cont.hashmap HashMap;
+import crack.http.auth User;
+import crack.http.core Request, RequestHandler;
+import crack.http.util MethodHandler, PathDispatcher, PostHandler;
+import .html HTMLFormatter, RequestHelper;
+
+# Store clipboards in memory per user.
+perUser := HashMap[String, String]();
+prefix := '/';
+
+bool get(Request req) {
+    r := RequestHelper(req, '/error');
+    user := User.get(req);
+    out := HTMLFormatter();
+    if (!user) {
+        out `<h1>Unauthorized</h1>`;
+        r.reply('Clipboard', out.getRaw());
+        return true;
+    }
+    out `
+        <form action="post" method="POST">
+            <textarea name="contents" rows="25" cols="80">$(perUser.get(user.id, ''))</textarea></br>
+            <input type="submit">
+            <input type="reset">
+        </form>
+        `;
+
+    r.reply('Clipboard', out.getRaw());
+    return true;
+}
+
+bool post(Request req) {
+    r := RequestHelper(req, '/error');
+    user := User.get(req);
+    contents := r.getRequiredSingle('contents');
+    if (!contents)
+        return true;
+    perUser[user.id] = contents;
+    req.sendRedirect(303, 'get');
+    return true;
+}
+
+RequestHandler registerAll() {
+    disp := PathDispatcher();
+    disp['get'] = MethodHandler('GET', get);
+    disp['post'] = PostHandler(post);
+    return disp;
+}
