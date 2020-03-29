@@ -1,0 +1,63 @@
+
+import crack.cont.array Array;
+import crack.exp.cmd ArgInfo, ArgInfoBase, ArgParser, ArgVal,
+    CommandArgParser, CommandInterface, ConverterBase, SubcommandArgInfo,
+    ValueMap;
+import crack.exp.cmd.doc addHelpCommand;
+import crack.cont.treemap TreeMap;
+import crack.strutil StringArray;
+
+@import crack.ann impl;
+@import crack.exp.cmd.ann command;
+
+import crack.ascii strip;
+import crack.io cerr, cin, cout;
+import crack.io.readers LineReader;
+import crack.sys argv;
+import .data Data;
+
+data := Data();
+data.init();
+
+input := LineReader(cin);
+String prompt(String prompt) {
+    cerr `\033[32;1m$prompt:\033[0m `;
+    return strip(input.readLine());
+}
+
+@command int dweb_tool(@subcmd) {
+    return 0;
+}
+
+## Prompts for a new user and password, adds them to the database.
+##
+## This will also effectively rewrite the password on an existing user.
+@command(parent = dweb_tool) int adduser() {
+    user := prompt('User');
+    password := prompt('Password');
+    data.addUser(user, password);
+    return 0;
+}
+
+## List all of the users in the database.
+@command(parent = dweb_tool) int listusers() {
+    for (user :in data.iterUsers())
+        cout `$(user.id)\n`;
+    return 0;
+}
+
+## Prompt for a user id and password and verify that the password is correct.
+@command(parent = dweb_tool) int checkpw() {
+    user := prompt('User');
+    password := prompt('Password');
+
+    u := data.auth.getUser(user);
+    if (u.hasPassword(password))
+        cerr `password matches\n`;
+    else
+        cerr `Invalid password\n`;
+    return 0;
+}
+
+addHelpCommand(dweb_tool_subcmds, dweb_tool());
+dweb_tool(argv.subarray(1))();
