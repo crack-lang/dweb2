@@ -233,6 +233,15 @@ class RequestHelper {
 
                     <div class="bottombar">
                         <span><a href="$prefix/">DWeb root</a></span>
+                        <span>
+                            <a href="$prefix/list/show">Shopping List</a>
+                        </span>
+                        <span>
+                            <a href="$prefix/clip/get">Clipboard</a>
+                        </span>
+                        <span>
+                            <a href="$prefix/user">User info</a>
+                        </span>
                         $(staticRow ? staticRow : Raw(''))
                     </div>
 
