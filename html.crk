@@ -290,3 +290,14 @@ Raw makeAngular(String url) {
           `;
     return out.getRaw();
 }
+
+## Return the script elements for a jquery script running at 'script' (under
+## the "static" tree).
+Raw makeJQuery(String script) {
+    HTMLFormatter out = {};
+    out I`<script src="$prefix/static/jquery-3.6.0.min.js">
+          </script>
+          <script src="$prefix/static/$script"></script>
+          `;
+    return out.getRaw();
+}
