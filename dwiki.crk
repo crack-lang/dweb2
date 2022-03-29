@@ -1,0 +1,407 @@
+
+import crack.ascii strip, wsplit;
+import crack.cont.hashmap HashMap;
+import crack.enc.base64 altEncode;
+import crack.fs makePath, Path;
+import crack.functor Functor1;
+import crack.http.auth AuthHandler, AuthInfo, User;
+import crack.http.core Request, RequestHandler;
+import crack.http.util MethodHandler, PathDispatcher, PostDataCollector, PostHandler;
+import crack.io FStr, StringWriter;
+import crack.lang Buffer, Exception;
+import crack.process Process, ProcessHandlerImpl, CRK_PIPE_STDOUT,
+    CRK_PROC_EXITED;
+import crack.strutil split, StringArray;
+import .data Data;
+import .html makeJQuery, HTMLFormatter, Raw, RequestHelper;
+
+@import crack.ann assert, cvars, impl;
+
+# Store clipboards in memory per user.
+perUser := HashMap[String, String]();
+prefix := '/';
+
+Path makeROPath(String docName, String suffix) {
+    result := makePath(FStr() `dwiki/repo/$docName`);
+    return suffix is null ? result : result[suffix];
+}
+
+bool get(Request req) {
+    r := RequestHelper(req, '/error');
+    user := User.get(req);
+    out := HTMLFormatter();
+    if (!user) {
+        out `<h1>Unauthorized</h1>`;
+        r.reply('Clipboard', out.getRaw());
+        return true;
+    }
+    out `
+        <form action="post" method="POST">
+            <textarea name="contents" rows="25" cols="80">$(perUser.get(user.id, ''))</textarea></br>
+            <input type="submit">
+            <input type="reset">
+        </form>
+        `;
+
+    r.reply('Clipboard', out.getRaw());
+    return true;
+}
+
+bool post(Request req) {
+    r := RequestHelper(req, '/error');
+    user := User.get(req);
+    contents := r.getRequiredSingle('contents');
+    if (!contents)
+        return true;
+    perUser[user.id] = contents;
+    req.sendRedirect(303, 'get');
+    return true;
+}
+
+class PermissionAuthHandler : AuthHandler {
+    String docName;
+    oper init(AuthInfo authInfo, String docName) :
+        AuthHandler(authInfo),
+        docName = docName {
+    }
+
+    bool oper call(Request req) {
+        aclReader := makeROPath(docName, 'acls.txt').makeFullReader();
+        for (line :in aclReader) {
+            id := strip(line);
+            if (id == '*')
+                return false;
+        }
+
+        # TODO: we have to reproduce the lookup logic here if we want to
+        #return AuthHandler.oper call(req);
+        return false;
+    }
+}
+
+class Mercurial {
+    @cvars {
+        Path repo;
+        String user;
+    }
+
+    ## Clones the object (not a mercurial clone, see below).  That's not at
+    ## all confusing.
+    Mercurial clone() {
+        return Mercurial(repo, user);
+    }
+
+    ## Returns a new Mercurial object with null ueer and repo.
+    @static Mercurial new() {
+        return Mercurial(null, null);
+    }
+
+    Mercurial forUser(String username) {
+        result := clone();
+        result.user = username;
+        return result;
+    }
+
+    Mercurial forRepo(Path repo) {
+        result := clone();
+        result.repo = repo;
+        return result;
+    }
+
+    Mercurial __cmd(StringArray argv, String action) {
+        proc := Process(argv, 0);
+        if (proc.run() != CRK_PROC_EXITED)
+            throw Exception('Error ' + action);
+        return this;
+    }
+
+    String __getHGRCCommon() {
+        return FStr() `[ui]\nusername = $user\n`;
+    }
+
+    void __writeHGRC() {
+        (repo/'.hg/hgrc').writeAll(__getHGRCCommon());
+    }
+
+    ## Appends user info to the repo.
+    void __appendHGRC() {
+        (repo/'.hg/hgrc').appender().write(__getHGRCCommon());
+    }
+
+    ## Clones the repo, returns a new repo in the 'dest' directory.
+    Mercurial clone(Path dest) {
+        @assert(repo && user);
+        __cmd(StringArray!['hg', 'clone', repo.getFullName(),
+                           dest.getFullName()],
+              'cloning repository');
+        newRepo := forRepo(dest);
+        newRepo.__appendHGRC();
+        return newRepo;
+    }
+
+    ## Initialize a new repo.  The repo and user must be defined.
+    Mercurial init() {
+        @assert(repo && user && repo.exists());
+        __cmd(StringArray!['hg', '--cwd', repo.getFullName(), 'init'],
+              'initializing repository');
+        __writeHGRC();
+        return this;
+    }
+
+    Mercurial push(Path dest) {
+        return __cmd(StringArray!['hg', 'push', '-R', repo.getFullName(),
+                                  dest.getFullName()],
+                     'pushing changes');
+    }
+
+    ## Add the file identified by 'path' for checkin.
+    Mercurial add(Path path) {
+        return __cmd(StringArray!['hg', 'add', '-R', repo.getFullName(),
+                                  path.getFullName()],
+                     'adding file');
+    }
+
+    Mercurial commit(String message) {
+        return __cmd(StringArray!['hg', '-R', repo.getFullName(), 'commit',
+                                  '-m', message],
+                     'committing');
+    }
+
+    Mercurial up() {
+        return __cmd(StringArray!['hg', '-R', repo.getFullName(), 'up'],
+                     'updating');
+    }
+
+    Mercurial up(String rev) {
+        return __cmd(StringArray!['hg', '-R', repo.getFullName(), 'up', rev],
+                     'updating');
+    }
+
+    ## Return the parent revision of the current worktree.
+    String getParent() {
+
+        class MyHandler : ProcessHandlerImpl {
+            String result;
+
+            void onOutLine(Buffer line) {
+                l := String(line);
+                if (l.startsWith('parent:')) {
+                    # Line of the form "changeset:  index:revision"
+                    cols := wsplit(l);
+                    result = split(cols[1], ':')[1];
+                }
+            }
+        }
+
+        proc := Process(StringArray!['hg', 'summary', '-R',
+                                     repo.getFullName()],
+                        CRK_PIPE_STDOUT);
+        handler := MyHandler();
+        proc.run(handler);
+        return handler.result;
+    }
+}
+
+bool gotChangeMarkers(Path file) {
+    for (line :in file.makeFullReader()) {
+        if (line.startsWith('<<<<<<<') || line.startsWith('>>>>>>>'))
+            return true;
+    }
+    return false;
+}
+
+String fixCRLFs(String input) {
+    out := StringWriter();
+    for (line :in split(input, b'\n')) {
+        if (line.endsWith('\r'))
+            line = line.slice(0, -1);
+        out.write(line);
+        out.write('\n');
+    }
+
+    # There will always be an extra newline, so strip it.
+    return out.string().slice(0, -1);
+}
+
+class DocWrapper @impl RequestHandler {
+    Data data;
+    String docName;
+    Path docPath;
+
+    oper init(Data data, String docName, Path docPath) :
+        data = data,
+        docName = docName,
+        docPath = docPath {
+    }
+
+    ## Called from a PostDataHandler when the post data is completely read.
+    bool postUpdate(Request req) {
+        r := RequestHelper(req, '/error');
+        contents := r.getRequiredSingle('contents');
+        if (contents is null)
+            return true;
+        contents = fixCRLFs(contents);
+        head := r.getRequiredSingle('head');
+        author := r.getRequiredSingle('author');
+
+        # Create a directory to write the contents into.
+        dirname := altEncode(data.rng());
+
+        tempRoot := makePath('dwiki/temp');
+        orgRepo := Mercurial(makeROPath(docName, null), author);
+        clone := orgRepo.clone(tempRoot/dirname);
+        mainFile := clone.repo/'main.md';
+
+        # Set up a variable to clean up the repo on exit.
+        class Cleanup {
+            @cvars {
+                Path path;
+            }
+
+            oper del() {
+                path.deleteTree();
+            }
+        }
+        cleanup := Cleanup(clone.repo);
+
+        # If we're at the head revision, this is easy.
+        if (clone.getParent() == head) {
+            existingContents := mainFile.readAll();
+            if (existingContents == contents) {
+                req.sendRedirect(303, FStr() `$docName?saved=true`);
+                return true;
+            }
+            mainFile.writeAll(contents);
+            clone.commit('no comment');
+            clone.push(orgRepo.repo);
+            orgRepo.up();
+        } else {
+            clone.up(head);
+            if (clone.getParent() != head)
+                return r.error('Invalid base revision, this is likely an '
+                               'internal error');
+            mainFile.writeAll(contents);
+            try {
+                clone.up();
+            } catch (Exception ex) {
+                # Can't think of a better way to do this -- display an edit
+                # form to the user.
+                out := HTMLFormatter();
+                newHead := clone.getParent();
+                contents = mainFile.readAll();
+                out I`<h1>The file has changed since you loaded it</h1>
+                      <p>Please go through and resolve all differences and
+                      change markers (the "<", ">" and "=" lines indicated
+                      below), and then save again.  Differences are marked in
+                      the contents as follows:
+
+                      <pre>
+                      blah blah blah
+                      <<<<<<< working copy
+                      And here's a line added by you.
+                      =======
+                      Here's a line that was added by someone else.
+                      >>>>>>> destination
+                      This line is fine.
+                      </pre>
+
+                      <div id="docpane">
+                        <form method="POST" action="$docName">
+                          <textarea name="contents" rows="25"
+                          cols="80">$contents</textarea>
+                          <br>
+                          <input name="head" type="hidden" value="$newHead">
+                          <p>Author: </p>
+                          <input name="author" type="entry" value="$author"><br>
+                          <input type="submit" value="Save">
+                        </form>
+                      </div>
+                      `;
+                r.reply('wiki/' + docName, out.getRaw(),
+                        makeJQuery('dwiki.js'));
+                return true;
+            }
+        }
+
+        req.sendRedirect(303, FStr() `$docName?saved=true`);
+        return true;
+    }
+
+    bool oper call(Request req) {
+        if (!req.getParsedPath()) {
+            if (req.method == 'GET') {
+                r := RequestHelper(req, '/error');
+                pagePath := docPath['main.md'];
+                if (!pagePath.exists())
+                    return false;
+                user := User.get(req);
+                userName := user ? user.id : '';
+
+                repo := Mercurial(docPath, 'unnamed');
+                head := repo.getParent();
+                if (!head)
+                    # This shouldn't happen, but if it does treat it like the
+                    # file doesn't exist.
+                    return false;
+
+                contents := pagePath.readAll();
+                out := HTMLFormatter();
+                if (r.getOptionalSingle('saved'))
+                    out `<h1>New Version Saved</h1>\n`;
+                out I`<div id="docpane"><pre id="contents">$contents</pre></div>
+                      <p><a id="editbtn" href="javascript:onEdit()">Edit</a></p>
+                      <form>
+                        <input id="head" type="hidden" value="$head">
+                        <input id="author" type="hidden" value="$userName">
+                      </form>
+                      `;
+                r.parcelAttrs = Raw('onload="onload()"');
+                r.reply('wiki/' + docName, out.getRaw(),
+                        makeJQuery('dwiki.js'));
+                return true;
+            } else if (req.method == 'POST') {
+                class Curry @impl Functor1[bool, Request] {
+                    @cvars {
+                        DocWrapper self;
+                    }
+
+                    bool oper call(Request req) {
+                        return self.postUpdate(req);
+                    }
+                }
+
+                req.postDataHandler = PostDataCollector(Curry(this));
+                return true;
+            } else {
+                req.addHeader('Allow', 'GET,POST');
+                req.sendReply(405, 'text/plain', 'Invalid Method');
+                return true;
+            }
+        } else {
+            return false;
+        }
+    }
+}
+
+## Creates a handler that dispatches to the wiki page identified by the next
+## path component.
+class WikiRoot @impl RequestHandler {
+    Data __data;
+    oper init(Data data) : __data = data {}
+    bool oper call(Request req) {
+        docName := req.getParsedPath()[0];
+        docPath := makeROPath(docName, null);
+        if (!docPath.exists())
+            return false;
+
+        req.parsedPath.delete(0);
+        return DocWrapper(__data, docName, docPath)(req);
+    }
+}
+
+RequestHandler registerAll() {
+    disp := PathDispatcher();
+    disp['get'] = MethodHandler('GET', get);
+    disp['post'] = PostHandler(post);
+    return disp;
+}

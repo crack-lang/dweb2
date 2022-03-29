@@ -14,10 +14,12 @@ import crack.protobuf readMessageFromString;
 import crack.sys argv;
 
 import .data Bookmark, Data;
+import .dwiki WikiRoot;
 import .html prefix, u, HTMLFormatter, Raw, RequestHelper;
 import .admin admin_registerAll = registerAll;
 import .checklist checklist_registerAll = registerAll;
 import .clipboard clipboard_registerAll = registerAll;
+import .util SoftAuthHandler;
 
 @import crack.ann implements;
 
@@ -105,10 +107,31 @@ bool style(Request req) {
     return true;
 }
 
+bool staticHandler(Request req) {
+    p := req.getParsedPath();
+    if (p.count() == 1) {
+        filename := p[0];
+        path := makePath('static')[filename];
+        if (path.exists()) {
+            type := 'text/plain';
+            if (filename.endsWith('.js'))
+                type = 'text/javascript';
+            else if (filename.endsWith('.css'))
+                type = 'text/css';
+            req.sendReply(200, type, path.readAll());
+            return true;
+        }
+    }
+    return false;
+}
+
 setLogLevel(DEBUG);
 
-
 authHandler := AuthHandler(data.auth);
+
+# Use this for cases where we can use User data if the user is logged in but
+# don't require a logged in user.
+softAuthHandler := SoftAuthHandler(data.auth);
 
 disp := PathDispatcher();
 disp['hello'] = Chain![HandlerFunc(softAuth), HandlerFunc(hello)];
@@ -123,6 +146,8 @@ disp['style.css'] = HandlerFunc(style);
 disp['admin'] = admin_registerAll(data, authHandler, prefix + '/admin');
 disp['list'] = checklist_registerAll(data, authHandler, prefix + '/list');
 disp['clip'] = Chain![authHandler, clipboard_registerAll()];
+disp['static'] = HandlerFunc(staticHandler);
+disp['dw'] = Chain![softAuthHandler, WikiRoot(data)];
 
 server.addHandler(HandlerFunc(log));
 server.addHandler(disp);

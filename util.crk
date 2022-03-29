@@ -1,11 +1,13 @@
 
 import crack.functor Functor1;
-import crack.http.auth AuthInfoImpl, Concatter, User, StupidRNG;
-import crack.http.core Request;
+import crack.http.auth AuthInfo, Concatter, User, StupidRNG;
+import crack.http.core Request, RequestHandler;
 import crack.http.util encodeForURI, URI_QUERY_VAL;
 import crack.io FStr;
 import crack.lang AppendBuffer;
 import crack.time Time;
+
+@import crack.ann impl;
 
 ## Escapes <, >, and & for use in HTML.
 String h(String val) {
@@ -42,15 +44,22 @@ String getUser(Request req) {
 
 alias LoginURL = Functor1[String, String];
 
-class AuthInfo : AuthInfoImpl {
-    String __prefix;
+## Auth handler that does not redirect when there's no valid user cookie.
+class SoftAuthHandler @impl RequestHandler {
 
-    oper init(String prefix, uint64 salt) :
-        AuthInfoImpl(StupidRNG(salt, Time.now().secs)),
-        __prefix = prefix {
-    }
+    AuthInfo authInfo;
 
-    LoginURL getLoginURL() {
-        return Concatter(FStr() `$__prefix/login?url=$__prefix`);
+    oper init(AuthInfo authInfo) : authInfo = authInfo {}
+
+    bool oper call(Request req) {
+        User user;
+        import crack.io cerr;
+        if (cookie := req.getCookie('SpugAuth')) {
+            user = authInfo.lookUp(cookie.value);
+            if (user)
+                user.putIn(req);
+        }
+
+        return false;
     }
 }
