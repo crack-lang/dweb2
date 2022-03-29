@@ -218,7 +218,9 @@ String fixCRLFs(String input) {
         out.write(line);
         out.write('\n');
     }
-    return out.string();
+
+    # There will always be an extra newline, so strip it.
+    return out.string().slice(0, -1);
 }
 
 class DocWrapper @impl RequestHandler {
@@ -264,6 +266,11 @@ class DocWrapper @impl RequestHandler {
 
         # If we're at the head revision, this is easy.
         if (clone.getParent() == head) {
+            existingContents := mainFile.readAll();
+            if (existingContents == contents) {
+                req.sendRedirect(303, FStr() `$docName?saved=true`);
+                return true;
+            }
             mainFile.writeAll(contents);
             clone.commit('no comment');
             clone.push(orgRepo.repo);
@@ -282,11 +289,11 @@ class DocWrapper @impl RequestHandler {
                 out := HTMLFormatter();
                 newHead := clone.getParent();
                 contents = mainFile.readAll();
-                import crack.io cerr; cerr `$(contents.getRepr())\n`;
                 out I`<h1>The file has changed since you loaded it</h1>
-                      <p>Please go through and resolve all differences, then
-                      save again.  Differences are marked in the contents as
-                      follows:
+                      <p>Please go through and resolve all differences and
+                      change markers (the "<", ">" and "=" lines indicated
+                      below), and then save again.  Differences are marked in
+                      the contents as follows:
 
                       <pre>
                       blah blah blah
