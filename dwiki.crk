@@ -306,9 +306,10 @@ class DocWrapper @impl RequestHandler {
                       </pre>
 
                       <div id="docpane">
+                        <pre id="rawContents" hidden>$contents</pre>
                         <form method="POST" action="$docName">
                           <textarea name="contents" rows="25"
-                          cols="80">$contents</textarea>
+                          cols="80"></textarea>
                           <br>
                           <input name="head" type="hidden" value="$newHead">
                           <p>Author: </p>
@@ -348,7 +349,9 @@ class DocWrapper @impl RequestHandler {
                 out := HTMLFormatter();
                 if (r.getOptionalSingle('saved'))
                     out `<h1>New Version Saved</h1>\n`;
-                out I`<div id="docpane"><pre id="contents">$contents</pre></div>
+                out I`<div id="docpane">
+                        <pre id="contents">Rendering...</pre>
+                      </div>
                       <p><a id="editbtn" href="javascript:onEdit()">Edit</a></p>
                       <form>
                         <input id="head" type="hidden" value="$head">
@@ -356,6 +359,9 @@ class DocWrapper @impl RequestHandler {
                       </form>
                       `;
                 r.parcelAttrs = Raw('onload="onload()"');
+                r.staticRow =
+                    Raw(FStr() `<pre id="rawContents" hidden>$contents</pre>`);
+
                 r.reply('wiki/' + docName, out.getRaw(),
                         makeJQuery('dwiki.js'));
                 return true;
