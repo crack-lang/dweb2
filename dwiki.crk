@@ -13,13 +13,27 @@ import crack.process Process, ProcessHandlerImpl, CRK_PIPE_STDOUT,
     CRK_PROC_EXITED;
 import crack.strutil split, StringArray;
 import .data Data;
-import .html makeJQuery, HTMLFormatter, Raw, RequestHelper;
+import .html makeJQuery, prefix, HTMLFormatter, Raw, RequestHelper;
 
 @import crack.ann assert, cvars, impl;
 
 # Store clipboards in memory per user.
 perUser := HashMap[String, String]();
-prefix := '/';
+
+## Returns a raw element containing all of the script includes necessary for
+## dwiki.js.
+Raw makeScriptIncludes() {
+    import crack.io cerr;
+    cerr `prefix is $prefix\n`;
+    return
+        Raw(
+            FStr() I`<script src="$prefix/static/marked.min.js">\
+                     </script>\
+                     <script type="text/javascript" \
+                     src="$prefix/static/purify.min.js"></script>` +
+            makeJQuery('dwiki.js')
+        );
+}
 
 Path makeROPath(String docName, String suffix) {
     result := makePath(FStr() `dwiki/repo/$docName`);
@@ -318,8 +332,7 @@ class DocWrapper @impl RequestHandler {
                         </form>
                       </div>
                       `;
-                r.reply('wiki/' + docName, out.getRaw(),
-                        makeJQuery('dwiki.js'));
+                r.reply('wiki/' + docName, out.getRaw(), makeScriptIncludes());
                 return true;
             }
         }
@@ -350,7 +363,7 @@ class DocWrapper @impl RequestHandler {
                 if (r.getOptionalSingle('saved'))
                     out `<h1>New Version Saved</h1>\n`;
                 out I`<div id="docpane">
-                        <pre id="contents">Rendering...</pre>
+                        <div id="contents">Rendering...</div>
                       </div>
                       <p><a id="editbtn" href="javascript:onEdit()">Edit</a></p>
                       <form>
@@ -362,8 +375,8 @@ class DocWrapper @impl RequestHandler {
                 r.staticRow =
                     Raw(FStr() `<pre id="rawContents" hidden>$contents</pre>`);
 
-                r.reply('wiki/' + docName, out.getRaw(),
-                        makeJQuery('dwiki.js'));
+                r.reply('wiki/' + docName, out.getRaw(), makeScriptIncludes());
+
                 return true;
             } else if (req.method == 'POST') {
                 class Curry @impl Functor1[bool, Request] {

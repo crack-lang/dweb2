@@ -1,26 +1,6 @@
 
 function processContents(elem, text) {
-    console.log('elem contents is ' + elem.html());
-    elem.html('');
-    console.log('elem contents after removeal is ' + elem.html());
-    while (text != '') {
-        var match = text.match(/\[([^\]]+)\]\(([^\)]+)\)/);
-        if (!match) {
-            elem.append(document.createTextNode(text));
-            return;
-        } else {
-            if (match.index > 0) {
-                elem.append(document.createTextNode(
-                                text.substr(0, match.index)
-                            ));
-            }
-            let ref = document.createElement('a');
-            ref.setAttribute('href', match[2]);
-            ref.appendChild(document.createTextNode(match[1]));
-            elem.append(ref);
-            text = text.substr(match.index + match[0].length);
-        }
-    }
+    elem.html(DOMPurify.sanitize(marked.parse(text)));
 }
 
 function onRender() {
