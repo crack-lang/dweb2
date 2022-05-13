@@ -7,7 +7,7 @@ function onRender() {
     var text = $('#contents').val();
     $('#rawContents').text(text);
     var head = $('#head').val();
-    $('#docpane').html('<pre id="contents"></pre>');
+    $('#docpane').html('<div id="contents"></div>');
     processContents($('#contents'), text);
     $('#editbtn').html('<a id="editbtn" href="javascript:onEdit()">' +
                        'Edit</a>');
