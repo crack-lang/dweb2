@@ -7,24 +7,26 @@ import crack.functor Functor1;
 import crack.http.auth AuthHandler, AuthInfo, User;
 import crack.http.core Request, RequestHandler;
 import crack.http.util MethodHandler, PathDispatcher, PostDataCollector, PostHandler;
-import crack.io FStr, StringWriter;
+import crack.io cerr, FStr, StringWriter;
 import crack.lang Buffer, Exception;
 import crack.process Process, ProcessHandlerImpl, CRK_PIPE_STDOUT,
     CRK_PROC_EXITED;
+import crack.regex Regex;
 import crack.strutil split, StringArray;
 import .data Data;
-import .html makeJQuery, prefix, HTMLFormatter, Raw, RequestHelper;
+import .html encodeForHTML, makeJQuery, prefix, u, HTMLFormatter, Raw, RequestHelper;
 
 @import crack.ann assert, cvars, impl;
 
 # Store clipboards in memory per user.
 perUser := HashMap[String, String]();
 
+const NAME_RX := Regex('^[A-Za-z0-9_]+$');
+
 ## Returns a raw element containing all of the script includes necessary for
 ## dwiki.js.
 Raw makeScriptIncludes() {
     import crack.io cerr;
-    cerr `prefix is $prefix\n`;
     return
         Raw(
             FStr() I`<script src="$prefix/static/marked.min.js">\
@@ -239,13 +241,19 @@ String fixCRLFs(String input) {
 
 class DocWrapper @impl RequestHandler {
     Data data;
-    String docName;
-    Path docPath;
+    String rootPath, docName;
+    Path docPath, repoPath;
 
-    oper init(Data data, String docName, Path docPath) :
+    ## rootPath: the path to the root of the dwiki doc tree.  e.g. "/dwiki/dw"
+    ## docName: The name of the document (e.g. "Foo" for the root of a doc
+    ##          tree, "Foo/Bar" for a child page)
+    ## docPath: The path to the document repository.
+    oper init(Data data, String rootPath, String docName, Path docPath) :
         data = data,
+        rootPath = rootPath,
         docName = docName,
-        docPath = docPath {
+        docPath = docPath,
+        repoPath = docPath {
     }
 
     ## Called from a PostDataHandler when the post data is completely read.
@@ -255,6 +263,8 @@ class DocWrapper @impl RequestHandler {
         if (contents is null)
             return true;
         contents = fixCRLFs(contents);
+        if (!contents.endsWith('\n'))
+            contents += '\n';
         head := r.getRequiredSingle('head');
         author := r.getRequiredSingle('author');
 
@@ -262,9 +272,17 @@ class DocWrapper @impl RequestHandler {
         dirname := altEncode(data.rng());
 
         tempRoot := makePath('dwiki/temp');
-        orgRepo := Mercurial(makeROPath(docName, null), author);
+        orgRepo := Mercurial(repoPath, author);
         clone := orgRepo.clone(tempRoot/dirname);
-        mainFile := clone.repo/'main.md';
+
+        # Compute the path to the file that we're going to modify (we don't
+        # have to validate, we've already done that in oper call.
+        mainFile := clone.repo;
+        for (elem :in req.getParsedPath())
+            mainFile = mainFile[elem];
+        if (!mainFile.exists())
+            mainFile.makeDirs();
+        mainFile = mainFile/'main.md';
 
         # Set up a variable to clean up the repo on exit.
         class Cleanup {
@@ -280,12 +298,18 @@ class DocWrapper @impl RequestHandler {
 
         # If we're at the head revision, this is easy.
         if (clone.getParent() == head) {
-            existingContents := mainFile.readAll();
+            existingContents := mainFile.exists() ? mainFile.readAll() : '';
             if (existingContents == contents) {
-                req.sendRedirect(303, FStr() `$docName?saved=true`);
+                req.sendRedirect(303, FStr() `$rootPath/$docName?saved=true`);
                 return true;
             }
+            exists := mainFile.exists();
             mainFile.writeAll(contents);
+
+            # If we're checking in for the first time, 'hg add' the file.
+            if (!exists)
+                clone.add(mainFile);
+
             clone.commit('no comment');
             clone.push(orgRepo.repo);
             orgRepo.up();
@@ -320,9 +344,9 @@ class DocWrapper @impl RequestHandler {
                       </pre>
 
                       <div id="docpane">
-                        <pre id="rawContents" hidden>$contents</pre>
-                        <form method="POST" action="$docName">
-                          <textarea name="contents" rows="25"
+                        <pre id="rawContents" hidden>$(contents)</pre>
+                        <form method="POST" action="$rootPath/$docName">
+                          <textarea name="contents" id="contents" rows="25"
                           cols="80"></textarea>
                           <br>
                           <input name="head" type="hidden" value="$newHead">
@@ -332,72 +356,79 @@ class DocWrapper @impl RequestHandler {
                         </form>
                       </div>
                       `;
+                r.parcelAttrs = Raw('onload="onload()"');
                 r.reply('wiki/' + docName, out.getRaw(), makeScriptIncludes());
                 return true;
             }
         }
 
-        req.sendRedirect(303, FStr() `$docName?saved=true`);
+        req.sendRedirect(303, FStr() `$rootPath/$docName?saved=true`);
         return true;
     }
 
     bool oper call(Request req) {
-        if (!req.getParsedPath()) {
-            if (req.method == 'GET') {
-                r := RequestHelper(req, '/error');
-                pagePath := docPath['main.md'];
-                if (!pagePath.exists())
-                    return false;
-                user := User.get(req);
-                userName := user ? user.id : '';
+        # Validate all names in the path and use them to augment the document
+        # path.
+        for (elem :in req.getParsedPath()) {
+            if (!NAME_RX.match(elem))
+                return false;
+            docPath = docPath[elem];
+            docName = FStr() `$docName/$elem`;
+        }
 
-                repo := Mercurial(docPath, 'unnamed');
-                head := repo.getParent();
-                if (!head)
-                    # This shouldn't happen, but if it does treat it like the
-                    # file doesn't exist.
-                    return false;
+        if (req.method == 'GET') {
+            r := RequestHelper(req, '/error');
+            pagePath := docPath['main.md'];
+            user := User.get(req);
+            userName := user ? user.id : '';
 
-                contents := pagePath.readAll();
-                out := HTMLFormatter();
-                if (r.getOptionalSingle('saved'))
-                    out `<h1>New Version Saved</h1>\n`;
-                out I`<div id="docpane">
-                        <div id="contents">Rendering...</div>
-                      </div>
-                      <p><a id="editbtn" href="javascript:onEdit()">Edit</a></p>
-                      <form>
-                        <input id="head" type="hidden" value="$head">
-                        <input id="author" type="hidden" value="$userName">
-                      </form>
-                      `;
-                r.parcelAttrs = Raw('onload="onload()"');
-                r.staticRow =
-                    Raw(FStr() `<pre id="rawContents" hidden>$contents</pre>`);
+            repo := Mercurial(repoPath, 'unnamed');
+            head := repo.getParent();
+            if (!head)
+                # This shouldn't happen, but if it does treat it like the
+                # file doesn't exist.
+                return false;
 
-                r.reply('wiki/' + docName, out.getRaw(), makeScriptIncludes());
+            contents := pagePath.exists() ?
+                            pagePath.readAll() :
+                            '# Page not found\nCreate new page.';
 
-                return true;
-            } else if (req.method == 'POST') {
-                class Curry @impl Functor1[bool, Request] {
-                    @cvars {
-                        DocWrapper self;
-                    }
+            out := HTMLFormatter();
+            if (r.getOptionalSingle('saved'))
+                out `<h1>New Version Saved</h1>\n`;
+            out I`<div id="docpane">
+                    <div id="contents">Rendering...</div>
+                  </div>
+                  <p><a id="editbtn" href="javascript:onEdit()">Edit</a></p>
+                  <form>
+                    <input id="head" type="hidden" value="$head">
+                    <input id="author" type="hidden" value="$userName">
+                  </form>
+                  `;
+            r.parcelAttrs = Raw('onload="onload()"');
+            r.staticRow =
+                Raw(FStr() `<pre id="rawContents" hidden>$contents</pre>`);
 
-                    bool oper call(Request req) {
-                        return self.postUpdate(req);
-                    }
+            r.reply('wiki/' + docName, out.getRaw(), makeScriptIncludes());
+
+            return true;
+        } else if (req.method == 'POST') {
+            class Curry @impl Functor1[bool, Request] {
+                @cvars {
+                    DocWrapper self;
                 }
 
-                req.postDataHandler = PostDataCollector(Curry(this));
-                return true;
-            } else {
-                req.addHeader('Allow', 'GET,POST');
-                req.sendReply(405, 'text/plain', 'Invalid Method');
-                return true;
+                bool oper call(Request req) {
+                    return self.postUpdate(req);
+                }
             }
+
+            req.postDataHandler = PostDataCollector(Curry(this));
+            return true;
         } else {
-            return false;
+            req.addHeader('Allow', 'GET,POST');
+            req.sendReply(405, 'text/plain', 'Invalid Method');
+            return true;
         }
     }
 }
@@ -405,8 +436,11 @@ class DocWrapper @impl RequestHandler {
 ## Creates a handler that dispatches to the wiki page identified by the next
 ## path component.
 class WikiRoot @impl RequestHandler {
-    Data __data;
-    oper init(Data data) : __data = data {}
+    @cvars {
+        Data __data;
+        String __rootPath;
+    }
+
     bool oper call(Request req) {
         docName := req.getParsedPath()[0];
         docPath := makeROPath(docName, null);
@@ -414,7 +448,7 @@ class WikiRoot @impl RequestHandler {
             return false;
 
         req.parsedPath.delete(0);
-        return DocWrapper(__data, docName, docPath)(req);
+        return DocWrapper(__data, __rootPath, docName, docPath)(req);
     }
 }
 

@@ -39,7 +39,10 @@ function onEdit() {
 }
 
 function onload() {
-    processContents($('#contents'), $('#rawContents').text());
+    if ($('#contents')[0].nodeName == 'TEXTAREA')
+        $('#contents').text($('#rawContents').text());
+    else
+        processContents($('#contents'), $('#rawContents').text());
 }
 
 
