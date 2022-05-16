@@ -125,7 +125,6 @@ class Mercurial {
     }
 
     Mercurial __cmd(StringArray argv, String action) {
-        cerr `xxx array is $argv\n`;
         proc := Process(argv, 0);
         if (proc.run() != CRK_PROC_EXITED)
             throw Exception('Error ' + action);
@@ -266,9 +265,7 @@ class DocWrapper @impl RequestHandler {
         contents = fixCRLFs(contents);
         if (!contents.endsWith('\n'))
             contents += '\n';
-        cerr `xxx contents is: $contents\n`;
         head := r.getRequiredSingle('head');
-        cerr `xxx head is $head\n`;
         author := r.getRequiredSingle('author');
         if (head is null || author is null)
             return true;
