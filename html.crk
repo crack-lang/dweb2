@@ -5,13 +5,55 @@
 
 import crack.enc.json JSONParser, ParseException, UnexpectedToken;
 import crack.http.core Request;
-import crack.http.util encodeForURI, parseQuery, QueryParmMap, URI_QUERY_VAL;
+import crack.http.util decode, encodeForURI, QueryParmMap, URI_QUERY_VAL;
 import crack.io FStr, StandardFormatter, StringFormatter, StringWriter;
-import crack.lang AppendBuffer;
+import crack.lang AppendBuffer, Buffer, InvalidArgumentError;
 
 @import crack.ann assert;
 
 String prefix;
+
+QueryParmMap parseQuery(Buffer contents) {
+
+    # States:
+    # 0 - before '=' (variable name)
+    # 1 - after '=' (value)
+    int state;
+
+    int varStart, varEnd;
+    AppendBuffer var = {32};
+    AppendBuffer value = {32};
+
+    QueryParmMap result = {};
+
+    for (int i = 0; i < contents.size; ++i) {
+        ch := contents[i];
+        if (state == 0) {
+            if (ch == b'=') {
+                varEnd = i;
+                state = 1;
+            } else {
+                var.append(ch);
+            }
+        } else if (state == 1) {
+            if (ch == b'&') {
+                result.add(decode(var, false, true), decode(value, false, true));
+
+                # Reset var and value.
+                var.size = 0;
+                value.size = 0;
+                state = 0;
+            } else {
+                value.append(ch);
+            }
+        }
+    }
+
+    if (state == 1)
+        result.add(decode(var, false, true), decode(value, false, true));
+
+    return result;
+}
 
 ## Encodes plain string 'val' so that it can be safely used in an HTML
 ## document.  Prefer to use HTMLFormatter instead.
