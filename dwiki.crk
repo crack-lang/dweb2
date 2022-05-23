@@ -256,8 +256,21 @@ class DocWrapper @impl RequestHandler {
         repoPath = docPath {
     }
 
+    void __commitFile(Path mainFile, Mercurial clone, Mercurial orgRepo,
+                      bool exists
+                      ) {
+        # If we're checking in for the first time, 'hg add' the file.
+        if (!exists)
+            clone.add(mainFile);
+
+        clone.commit('no comment');
+        clone.push(orgRepo.repo);
+        orgRepo.up();
+    }
+
     ## Called from a PostDataHandler when the post data is completely read.
     bool postUpdate(Request req) {
+        cerr `in postUpdate\n`;
         r := RequestHelper(req, '/error');
         contents := r.getRequiredSingle('contents');
         if (contents is null)
@@ -282,8 +295,10 @@ class DocWrapper @impl RequestHandler {
         mainFile := clone.repo;
         for (elem :in req.getParsedPath())
             mainFile = mainFile[elem];
-        if (!mainFile.exists())
+        if (!mainFile.exists()) {
+            cerr `making directory $mainFile\n`;
             mainFile.makeDirs();
+        }
         mainFile = mainFile/'main.md';
 
         # Set up a variable to clean up the repo on exit.
@@ -308,18 +323,13 @@ class DocWrapper @impl RequestHandler {
             exists := mainFile.exists();
             mainFile.writeAll(contents);
 
-            # If we're checking in for the first time, 'hg add' the file.
-            if (!exists)
-                clone.add(mainFile);
-
-            clone.commit('no comment');
-            clone.push(orgRepo.repo);
-            orgRepo.up();
+            __commitFile(mainFile, clone, orgRepo, exists);
         } else {
             clone.up(head);
             if (clone.getParent() != head)
                 return r.error('Invalid base revision, this is likely an '
                                'internal error');
+            exists := mainFile.exists();
             mainFile.writeAll(contents);
             try {
                 clone.up();
@@ -362,6 +372,7 @@ class DocWrapper @impl RequestHandler {
                 r.reply('wiki/' + docName, out.getRaw(), makeScriptIncludes());
                 return true;
             }
+            __commitFile(mainFile, clone, orgRepo, exists);
         }
 
         req.sendRedirect(303, FStr() `$rootPath/$docName?saved=true`);
