@@ -1,0 +1,129 @@
+## URL Shortener.
+
+import crack.enc.base64 altEncode;
+import crack.http.core Request, RequestHandler;
+import crack.io cerr;
+import crack.lang cmp, makeHashVal;
+import crack.protobuf readMessageFromString, Field, Message, ProtoWriter;
+import crack.hash.sha256 SHA256;
+import crack.http.auth User;
+import kvjournal.kvdb DBIFace;
+import .html RequestHelper;
+
+@import crack.ann cvars, impl;
+@import crack.protobuf.ann protobuf;
+
+@protobuf {
+    message ShortenedURL {
+        ## Target URL.
+        optional string target = 1;
+
+        ## Designates the owner of the url (if any).
+        optional string owner = 2;
+    }
+}
+
+## Hash the text to a base64 encoded SHA256 hash.
+String _hash(String text) {
+    hasher := SHA256();
+    hasher.update(text);
+    return altEncode(hasher.digest());
+}
+
+## XXX temporary, delete.
+String hash(String text) {
+    return _hash(text);
+}
+
+## Handler for the "shorten" request.
+##
+## This is a post request that returns a shortened URL for the url specified
+## in its "u" query parameter, e.g. "shorten?u=http://very/long/url".  The
+## query parameter may also be specified in the contents.
+class Shorten @impl RequestHandler {
+
+    @cvars {
+        ## Stores the mapping from shortened hash keys to target urls.
+        DBIFace db;
+
+        ## The prefix to prepend to the shortened digest to be returned.  e.g.
+        ## for names like "http://sho.rt/H4sh" we'd use a prefix of
+        ## "http://sho.rt/".  This should take you to the LookupShortened
+        ## handler.
+        String prefix;
+
+        ## URL to redirect to for errors.
+        String errorURL;
+    }
+
+    bool oper call(Request req) {
+        r := RequestHelper(req, errorURL);
+        url := r.getRequiredSingle('u');
+        if (url is null)
+            return true;
+
+        # Hash the URL and base64 encode it.
+        digest := _hash(url);
+
+        shortDigestLen := 4;
+        String shortDigest;
+        while (true) {
+            shortDigest = digest.slice(0, shortDigestLen);
+            if (serializedEntry := db.get(shortDigest)) {
+                entry := ShortenedURL();
+                readMessageFromString(entry, serializedEntry);
+                # If we've already got a match, we're done.
+                if (entry.target == url) {
+                    req.sendReply(200, 'text/plain', prefix + shortDigest);
+                    return true;
+                }
+
+                # This is a collision.  Increase the length by one and lookup
+                # again.
+                if (++shortDigestLen > digest.count()) {
+                    r.error('SHA256 collision with a different existing '
+                            'name!  Is this the end of the universe?');
+                    return true;
+                }
+            } else {
+                break;
+            }
+        }
+
+        # There is no entry with the current shortDigest in the database.
+        # Create a new entry.
+        userId := User.get(req)?.id;
+        entry := ShortenedURL();
+        entry.owner = userId;
+        entry.target = url;
+        db[shortDigest] = entry.toString();
+        db.commit();
+
+        req.sendReply(200, 'text/plain', prefix + shortDigest);
+        return true;
+    }
+}
+
+## Serves a redirect to the shortened URL.
+class LookupShortened @impl RequestHandler {
+
+    @cvars {
+        DBIFace db;
+        String errorURL;
+    }
+
+    bool oper call(Request req) {
+        key := req.getParsedPath()[0];
+        serializedEntry := db.get(key);
+        if (!serializedEntry) {
+            req.sendReply(404, 'text/html',
+                          '<html><body><h1>404 - Not Found');
+            return true;
+        }
+
+        entry := ShortenedURL();
+        readMessageFromString(entry, serializedEntry);
+        req.sendRedirect(301, entry.target);
+        return true;
+    }
+}

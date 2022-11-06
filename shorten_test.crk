@@ -1,0 +1,161 @@
+
+import crack.cont.treemap TreeMap;
+import crack.http.core Request;
+import crack.http.util encodeForURI, URI_QUERY_VAL;
+import crack.io cerr, FStr, StringWriter;
+import crack.net InetAddress;
+import unittest register, runAllTests, Test;
+import kvjournal.kvdb DBIFace, DBIter, DBRec;
+import .shorten hash, Shorten, LookupShortened, ShortenedURL;
+
+@import crack.ann assert, cvars, define, impl;
+
+@define test(name, body) {
+    class name : Test {
+        void run() body
+    }
+    register(name());
+}
+
+class RequestHelper : Request {
+    StringWriter out;
+
+    oper init(StringWriter out, String path) :
+        Request(out, InetAddress(127, 0, 0, 1, 1000)),
+        out = out {
+
+        this.path = path;
+    }
+
+    @static RequestHelper create(String path) {
+        return RequestHelper(StringWriter(), path);
+    }
+}
+
+## TODO: Move to kvjournal.
+class MemDB @impl DBIFace {
+
+    alias StringMap = TreeMap[String, String];
+    alias StringMapIter = StringMap.Iter;
+
+    class Iter @impl DBIter {
+        @cvars {
+            StringMapIter __iter;
+        }
+
+        DBRec elem() {
+            e := __iter.elem();
+            return DBRec(e.key, e.val);
+        }
+
+        void next() {
+            __iter.next();
+        }
+    }
+
+    @cvars {
+        StringMap __rep;
+        bool transactional;
+    }
+
+    oper init() : __rep = StringMap() {}
+
+    String oper []=(String key, String val) {
+        __rep[key] = val;
+        return val;
+    }
+
+    String oper [](String key) {
+        return __rep[key];
+    }
+
+    String get(String key, String default) {
+        return __rep.get(key, default);
+    }
+
+    void delete(String key) {
+        __rep.delete(key);
+    }
+
+    DBIFace getTxn() {
+        return MemDB(__rep, true);
+    }
+
+    bool isTxn() { return transactional }
+
+    void touch(String key) {}
+
+    void commit() {}
+
+    # XXX Doesn't work yet.
+    void rollback() {}
+
+    DBIter iter() { return Iter(__rep.iter()) }
+
+    DBIter find(String key) {
+        StringMapIter i;
+        for (i on __rep) {
+            if (i.elem() == key)
+                break;
+        }
+        return Iter(i);
+    }
+}
+
+@test(Shorten_registration, {
+    db := MemDB();
+    shorten := Shorten(db, 'prefix/', 'error/');
+    req := RequestHelper.create('/foo?u=http://target/url');
+    shorten(req);
+
+    @assert(req.out.string() ==
+            I'HTTP/1.1 200 Stat
+              Content-type: text/plain
+              Content-length: 11
+
+              prefix/pzMQ'
+            );
+    rec := ShortenedURL();
+    rec.target = 'http://target/url';
+    @assert(db['pzMQ'] == rec.toString());
+
+    # Try it again, result should be the same.
+    req = RequestHelper.create('/foo?u=http://target/url');
+    shorten(req);
+
+    @assert(req.out.string() ==
+            I'HTTP/1.1 200 Stat
+              Content-type: text/plain
+              Content-length: 11
+
+              prefix/pzMQ'
+            );
+
+
+    # Force a collision.
+    urlHash := 'ioKI9m5ERiayrKGb68aDlkkpVwORrjovQ.hRtd8Vml4';
+    req = RequestHelper.create(
+        FStr() `/foo?u=$(encodeForURI(urlHash, URI_QUERY_VAL))\n`
+    );
+    shorten(req);
+    @assert(req.out.string() ==
+        I'HTTP/1.1 200 Stat
+          Content-type: text/plain
+          Content-length: 12
+
+          prefix/pzMQe'
+        );
+
+    lookup := LookupShortened(db, 'error/');
+    req = RequestHelper.create('/pzMQ');
+    @assert(lookup(req));
+    @assert(req.out.string() ==
+            I'HTTP/1.1 301 Stat
+              Content-length: 0
+              Location: http://target/url
+
+              '
+            );
+})
+
+runAllTests();
