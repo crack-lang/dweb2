@@ -1,0 +1,54 @@
+
+import crack.http.core Request, RequestHandler;
+import crack.io StringWriter;
+import crack.net InetAddress;
+import .util PrefixDispatcher;
+import unittest register, runAllTests, Test;
+
+@import crack.ann assert, define, impl;
+
+@define test(name, body) {
+    class name : Test {
+        void run() body
+    }
+    register(name());
+}
+
+class FakeHandler @impl RequestHandler {
+    bool called;
+
+    bool oper call(Request req) {
+        called = true;
+        return true;
+    }
+}
+
+Request makeRequest(String path) {
+    out := StringWriter();
+    req := Request(out, InetAddress(127, 0, 0, 1, 0));
+    req.path = path;
+    return req;
+}
+
+@test(PrefixDispatcher_basicFunctionality, {
+    disp := PrefixDispatcher();
+    req := makeRequest('/abacab');
+
+    disp['ab'] = abHandler := FakeHandler();
+    disp['a'] = aHandler := FakeHandler();
+
+    @assert(!disp(makeRequest('/unmatched')));
+    @assert(!abHandler.called);
+    @assert(!aHandler.called);
+
+    @assert(disp(makeRequest('/abacab')));
+    @assert(abHandler.called);
+    @assert(!aHandler.called);
+
+    abHandler.called = false;
+    @assert(disp(makeRequest('/alisteir')));
+    @assert(!abHandler.called);
+    @assert(aHandler.called);
+})
+
+runAllTests();

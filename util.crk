@@ -4,7 +4,9 @@ import crack.http.auth AuthInfo, Concatter, User, StupidRNG;
 import crack.http.core Request, RequestHandler;
 import crack.http.util encodeForURI, URI_QUERY_VAL;
 import crack.io FStr;
-import crack.lang AppendBuffer;
+import crack.cont.treemap TreeMap;
+import crack.lang AppendBuffer, Box, SubString;
+import crack.strutil split;
 import crack.time Time;
 
 @import crack.ann impl;
@@ -60,6 +62,44 @@ class SoftAuthHandler @impl RequestHandler {
                 user.putIn(req);
         }
 
+        return false;
+    }
+}
+
+## String implementation that reverses comparison so they can be stored in
+## descending order in a TreeMap.
+class DescendSortString : SubString {
+    oper init(String other) : SubString(other, 0) {}
+
+    int cmp(Object other) {
+        return -SubString.cmp(other);
+    }
+}
+
+## Dispatches based on path prefixes, which are not necessarily complete path
+## components.  Matches the most specific path stored in it, so "ab" would be
+## matched before "a".
+##
+## Mutates the parsed path in the request to remove the prefix from it.
+class PrefixDispatcher @impl RequestHandler {
+    TreeMap[DescendSortString, Box[RequestHandler]] __handlers = {};
+
+    RequestHandler oper []=(String prefix, RequestHandler handler) {
+        __handlers[DescendSortString(prefix)] = Box[RequestHandler](handler);
+        return handler;
+    }
+
+    bool oper call(Request req) {
+        remaining := req.getParsedPath().join('/');
+        for (entry :in __handlers) {
+            if (remaining.startsWith(entry.key)) {
+                # Remove the prefix from the parsed path.
+                remaining = remaining.substr(entry.key.count());
+                req.parsedPath = split(remaining, '/');
+
+                return entry.val.val(req);
+            }
+        }
         return false;
     }
 }
