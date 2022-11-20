@@ -3,7 +3,7 @@ import crack.cont.array Array;
 import crack.cont.hashmap HashMap;
 import crack.fs makePath, Path;
 import crack.io cout, StringFormatter;
-import crack.http.auth AuthHandler, LoginHandler, User;
+import crack.http.auth AuthHandler, User;
 import crack.http.core HandlerFunc, Request, RequestHandler;
 import crack.http.server Server;
 import crack.http.util parseQuery, Chain, MethodHandler, MultiMethod,
@@ -17,6 +17,7 @@ import kvjournal.db BFile;
 import .data Bookmark, Data;
 import .dwiki WikiRoot;
 import .html prefix, u, HTMLFormatter, Raw, RequestHelper;
+import .login DWebLoginHandler;
 import .admin admin_registerAll = registerAll;
 import .checklist checklist_registerAll = registerAll;
 import .clipboard clipboard_registerAll = registerAll;
@@ -166,7 +167,7 @@ disp['user'] = Chain![authHandler, HandlerFunc(userCheck)];
 disp['addBookmark'] = Chain![authHandler,
                              PostHandler(HandlerFunc(addBookmark))
                              ];
-disp['login'] = LoginHandler(data.auth);
+disp['login'] = DWebLoginHandler(data.auth);
 disp['style.css'] = HandlerFunc(style);
 disp['admin'] = admin_registerAll(data, authHandler, prefix + '/admin');
 disp['list'] = checklist_registerAll(data, authHandler, prefix + '/list');

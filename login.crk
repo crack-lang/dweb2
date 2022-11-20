@@ -1,0 +1,32 @@
+## Fancy login page.
+
+import crack.http.auth AuthInfo, LoginHandler;
+import crack.http.core Request;
+import crack.http.util QueryParmMap;
+import .html HTMLFormatter, Raw, RequestHelper;
+
+## This class is a drop-in replacement for crack.http.auth.LoginHandler that
+## renders the login form in the context of a standard HTML page.
+class DWebLoginHandler : LoginHandler {
+
+    oper init(AuthInfo authInfo) : LoginHandler(authInfo) {}
+
+     bool onGet(Request req) {
+        url := QueryParmMap.getOrMake(req).getSingle('url');
+        if (!url)
+            url = '';
+        loginURL := authInfo.getLoginURL()(url);
+        r := RequestHelper(req, '/error');
+        out := HTMLFormatter();
+        out `<form method="POST" action="$loginURL">
+                 <h1>Enter your user id and password</h1>
+                 User Id: <input type="entry" name="user"><br>
+                 Password: <input type="password" name="password"><br>
+                 <input type="submit" value="Login"><br>
+                 <input type="hidden" name="url" value="$url">
+             </form>`;
+
+        r.reply('Login', out.getRaw());
+        return true;
+    }
+}
