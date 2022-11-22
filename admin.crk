@@ -119,11 +119,15 @@ bool verifyAdmin(Request req) {
 }
 
 ## Register all functions with a PathDispatcher().
-RequestHandler registerAll(Data data_, AuthHandler authHandler, String prefix) {
+##
+## authHandler should be a method that verifies that there is a logged in user
+## who has admin privileges.
+RequestHandler registerAll(Data data_, RequestHandler authHandler,
+                           String prefix) {
     pfx = prefix;
     data = data_;
     disp := PathDispatcher();
-    # XXX Should be also checking for admin.
+    # TODO: We currently check for admin using "verifyAdmin" which isn't great.
     disp['manageUsers'] = HandlerFunc(manageUsers);
     disp['addUser'] = PostHandler(addUser);
     disp['deleteUser'] = PostHandler(deleteUser);
