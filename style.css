@@ -8,11 +8,11 @@ body {
     font: 18px helvetica,sans-serif;
 }
 
-a {
+a[href] {
     color: #fcc;
 }
 
-a:hover {
+a[href]:hover {
     background-color: #222
 }
 
