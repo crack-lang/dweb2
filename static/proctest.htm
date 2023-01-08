@@ -1,0 +1,15 @@
+
+<h1>
+%{
+set num [+ $num 1]
+format 'Hello freakin world.  This is a number: ' $num
+%}
+</h1>
+
+<h1>News</h1>
+
+%{
+var blog [Blog blog]
+blog setBriefTitleHeader 3
+blog briefs 3
+%}
