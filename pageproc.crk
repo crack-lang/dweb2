@@ -1,0 +1,63 @@
+## Page processor.  Reads a page definition file, searches for crash
+## commands (in lines starting with "%") and renders the resulting output as
+## HTML.
+##
+## A line beginning with "%{" indicates that all following lines up until the
+## next line beginning with "%}" are part of a multi-line command:
+##
+##  %{
+##      # Multi-line crash command -- don't ever actually do this with an
+##      # unsanitized "userName" variable!
+##      format '<h1>Hello ' $userName '!</h1>\n'
+##  %}
+##
+## Text following "%{" and "%}" on the same line is ignored, so these lines
+## can also be used for comments.
+##
+## A line starting with a "%" that is not immediately followed by the curly
+## brace is treated as a single line command, so in this case we could have
+## simply done this:
+##
+##  %format '<h1>Hello ' $userName '!</h1>\n'
+##
+## The return value provided by all commands will be formatted into the
+## document.
+
+import crack.io Reader, StringFormatter;
+import crack.io.readers LineReader;
+import crack.lang AppendBuffer;
+import crash.crash compile, eval, EvalContext;
+import .html Raw;
+
+## Process the input from 'src', evaluating all commands with the Crash
+## interpreter in 'context'.
+Raw processPage(EvalContext context, Reader src) {
+    lines := LineReader(src);
+    result := StringFormatter();
+    commandBuffer := AppendBuffer(256);
+    bool inCommand;
+
+    for (line :in lines) {
+        if (inCommand) {
+            if (line.startsWith('%}')) {
+                cmdOutput := eval(compile(String(commandBuffer)), context);
+                result `$cmdOutput`;
+                commandBuffer = AppendBuffer(256);
+                inCommand = false;
+            } else {
+                commandBuffer.extend(line);
+            }
+        } else {
+            if (line.startsWith('%{')) {
+                inCommand = true;
+            } else if (line.startsWith('%')) {
+                cmdOutput := eval(compile(line.slice(1)), context);
+                result `$cmdOutput`;
+            } else {
+                result `$line`;
+            }
+        }
+    }
+
+    return Raw(result.string());
+}

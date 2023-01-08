@@ -1,0 +1,211 @@
+## Module for generating blogs from a directory full of blog files.
+
+import crack.ascii strip;
+import crack.cont.array Array;
+import crack.fs makePath, Path;
+import crack.functor Functor3;
+import crack.io FStr, Reader, StringFormatter;
+import crack.io.readers FullReader;
+import crack.lang cmp, Exception;
+import crack.nml.block TextBlock;
+import crack.nml.html HTMLFormatter;
+import crack.nml.parse DocParser;
+import crack.http.core Request, RequestHandler;
+import crash.crash Builtin, EvalContext, ObjOf, ParmInfo;
+import crash.types IntObj;
+import .html DWebFormatter = HTMLFormatter, RequestHelper, Raw;
+
+@import crack.ann cvars, impl, struct;
+@import crash.ann function;
+
+@struct Post {
+    String filename;
+    String title;
+    Raw brief;
+    Raw contents;
+}
+
+alias PageWrapper = Functor3[String, Raw, String, Request];
+
+String defaultPageWrapper(Raw contents, String title, Request req) {
+    return RequestHelper(req, '/error').makePage(title, contents);
+}
+
+# #nml
+# 2022-01-03 - Title
+# ==================
+#
+# This is the brief.
+#
+# \more()
+#
+# This is the rest of the post.
+
+class Blog @impl RequestHandler {
+    Array[Post] __posts;
+    String briefTitleHeader = '2';
+    String relPath = 'blog';
+
+    ## Function that generates a page from its parcel.  This is used to
+    ## generate all stand-alone blog pages.
+    PageWrapper pageWrapper = PageWrapper.Wrap(defaultPageWrapper);
+
+    @cvars {
+        Path __dir;
+    }
+
+    Post _parseNMLPost(FullReader src, String filename) {
+        doc := DocParser(src, filename).parseDoc();
+        state := 0;
+        TextBlock titleBlock,
+                briefBlock = {null, 0, 'doc', false},
+                moreBlock = {null, 0, 'doc', false};
+
+        # Pick apart the separate parts of the post.
+        for (word :in doc.words) {
+            tb := TextBlock.cast(word, null);
+            if (state == 0) {
+                if (tb?.type == '1') {
+                    titleBlock = tb;
+                    titleBlock.type = '2';
+                    state = 1;
+                }
+            } else if (state == 1) {
+                if (tb?.type == 'more') {
+                    state = 2;
+                } else {
+                    briefBlock.words.append(word);
+                }
+            } else if (state == 2) {
+                moreBlock.words.append(word);
+            }
+        }
+
+        if (!titleBlock)
+            throw Exception(FStr() `Missing title in $filename`);
+
+        Raw parseBlock(TextBlock block) {
+            tmp := StringFormatter();
+            formatter := HTMLFormatter(tmp);
+            formatter.format(block);
+            formatter.close();
+            return Raw(tmp.string());
+        }
+
+        titleFormatter := StringFormatter();
+        titleBlock.flattenTo(titleFormatter);
+        title := titleFormatter.string();
+        brief := parseBlock(briefBlock);
+        contents := parseBlock(moreBlock);
+
+        return Post(filename, title, brief, contents);
+    }
+
+    Post parsePost(FullReader src, String filename) {
+        first := src.readLine();
+        if (strip(first) == '#nml')
+            return _parseNMLPost(src, filename);
+        else
+            # Assume plain HTML.
+            return Post(filename, Raw(''), Raw(src.readAll()), Raw(''));
+    }
+
+    Array[Post] oper .posts() {
+        if (__posts is null) {
+            __posts = Array[Post]();
+            for (file :in __dir.children())
+                __posts.append(parsePost(file.makeFullReader(),
+                                         file.getName())
+                               );
+            __posts.sort(
+                lambda int(Post a, Post b) {
+                    return cmp(b.filename, a.filename);
+                }
+            );
+        }
+        return __posts;
+    }
+
+    Raw renderBriefs(int count) {
+        StringFormatter out = {};
+        for (iter :on posts) {
+            if (iter.index == count)
+                break;
+
+            elem := iter.elem();
+
+            more := elem.contents ?
+                FStr() I`<br>
+                         <a href="$(relPath)/$(elem.filename)">Read More\
+                         </a>` :
+                '';
+
+            out I`<h$(briefTitleHeader)>$(elem.title)\
+                  </h$(briefTitleHeader)>
+                  $(elem.brief)$more
+                  `;
+        }
+
+        if (posts.count() > count)
+            out `<br><a href="$relPath?start=$(count)">Read Older</a>\n`;
+
+        return Raw(out.string());
+    }
+
+    bool oper call(Request req) {
+        parsedPath := req.getParsedPath();
+        if (parsedPath.count() != 1) {
+            # Render the blog page.
+            renderedPage := pageWrapper(
+                Raw('<h1>News</h1>\n' + renderBriefs(1000)),
+                'News',
+                req
+            );
+            req.sendReply(200, 'text/html', renderedPage);
+            return true;
+        }
+
+        entryPath := __dir/parsedPath[0];
+        post := parsePost(entryPath.makeFullReader(), entryPath.getName());
+        fullPage := DWebFormatter();
+        fullPage I`<h1>$(post.title)</h1>
+                   $(post.brief)
+                   $(post.contents)
+                   `;
+        renderedPage := pageWrapper(fullPage.getRaw(), post.title, req);
+        req.sendReply(200, 'text/html', renderedPage);
+
+        return true;
+    }
+}
+
+alias BlogObj = ObjOf[Blog];
+
+@function BlogObj makeBlog(String dirname) {
+    blog := Blog(makePath(dirname));
+
+    ## Return up to 'count' briefs.  If there are more briefs left over append
+    ## a "Read Older" link.
+    @function(Blog) Raw briefs(int count) {
+        return self.renderBriefs(count);
+    }
+
+    ## Set the header level.  The value must be a string representation of an
+    ## integer (the default is 2).
+    @function(Blog) int setBriefTitleHeader(String val) {
+        self.briefTitleHeader = val;
+        return 0;
+    }
+
+    ## Set the relative path of blog articles.  Default is "blog".
+    @function(Blog) int setRelPath(String relPath) {
+        self.relPath = relPath;
+        return 0;
+    }
+
+    result := BlogObj(blog);
+    result.define('briefs', briefs(blog));
+    result.define('setBriefTitleHeader', setBriefTitleHeader(blog));
+    result.define('setRelPath', setRelPath(blog));
+    return result;
+}

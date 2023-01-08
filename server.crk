@@ -12,8 +12,11 @@ import crack.functor Functor1, Function1;
 import crack.logger setLogLevel, DEBUG;
 import crack.protobuf readMessageFromString;
 import crack.sys argv;
+import crash.crash createRootContext, EvalContext, SimpleValue;
+import crash.types IntObj;
 import kvjournal.db BFile;
 
+import .blog makeBlog, Blog;
 import .data Bookmark, Data;
 import .dwiki WikiRoot;
 import .html prefix, u, HTMLFormatter, Raw, RequestHelper;
@@ -21,6 +24,7 @@ import .login DWebLoginHandler;
 import .admin admin_registerAll = registerAll;
 import .checklist checklist_registerAll = registerAll;
 import .clipboard clipboard_registerAll = registerAll;
+import .pageproc processPage;
 import .util SoftAuthHandler;
 import .shorten Shorten, LookupShortened;
 
@@ -128,6 +132,9 @@ bool staticHandler(Request req) {
     return false;
 }
 
+EvalContext evalCtx = createRootContext();
+evalCtx.define('num', SimpleValue(IntObj(0)));
+evalCtx.define('Blog', makeBlog());
 
 ## Wraps file contents in a standard page.
 class StandardPage @impl RequestHandler {
@@ -140,7 +147,11 @@ class StandardPage @impl RequestHandler {
     }
 
     bool oper call(Request req) {
-        RequestHelper(req, '/error').reply(title, Raw(contents.readAll()));
+        RequestHelper(req, '/error').reply(title,
+                                           processPage(evalCtx,
+                                                       contents.reader()
+                                                       )
+                                           );
         return true;
     }
 }
@@ -173,6 +184,11 @@ disp['admin'] = admin_registerAll(data, authHandler, prefix + '/admin');
 disp['list'] = checklist_registerAll(data, authHandler, prefix + '/list');
 disp['clip'] = Chain![authHandler, clipboard_registerAll()];
 disp['static'] = HandlerFunc(staticHandler);
+disp['proctest'] = Chain![authHandler,
+                          StandardPage('Proctest', 'static/proctest.htm')
+                          ];
+blog := Blog(makePath('blog'));
+disp['blog'] = Chain![authHandler, blog];
 
 shortenDB := BFile.makeFile(makePath('shortened.db'));
 disp['shorten'] =
