@@ -154,7 +154,7 @@ class Blog @impl RequestHandler {
 
     bool oper call(Request req) {
         parsedPath := req.getParsedPath();
-        if (parsedPath.count() != 1) {
+        if (!parsedPath) {
             # Render the blog page.
             renderedPage := pageWrapper(
                 Raw('<h1>News</h1>\n' + renderBriefs(1000)),
@@ -163,7 +163,12 @@ class Blog @impl RequestHandler {
             );
             req.sendReply(200, 'text/html', renderedPage);
             return true;
+        } else if (parsedPath.count() == 1 && parsedPath[0] == '') {
+            req.sendRedirect(301, req.path.slice(0, -1));
         }
+
+        if (parsedPath.count() != 1)
+            return false;
 
         entryPath := __dir/parsedPath[0];
         post := parsePost(entryPath.makeFullReader(), entryPath.getName());
