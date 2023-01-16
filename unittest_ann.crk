@@ -1,0 +1,12 @@
+
+@import crack.ann define, export, exporter;
+@exporter;
+
+@define test(name, body) {
+    class name : Test {
+        void run() body
+    }
+    register(name());
+}
+
+@export test;

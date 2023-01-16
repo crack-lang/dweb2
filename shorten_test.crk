@@ -9,13 +9,7 @@ import kvjournal.kvdb DBIFace, DBIter, DBRec;
 import .shorten hash, Shorten, LookupShortened, ShortenedURL;
 
 @import crack.ann assert, cvars, define, impl;
-
-@define test(name, body) {
-    class name : Test {
-        void run() body
-    }
-    register(name());
-}
+@import unittest_ann test;
 
 class RequestHelper : Request {
     StringWriter out;
