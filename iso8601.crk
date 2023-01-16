@@ -1,0 +1,43 @@
+## ISO 8601 time module.
+
+import crack.io Formatter, FStr;
+import crack.lang AppendBuffer, CString, InvalidArgumentError;
+import crack.regex Regex;
+import crack.runtime strptime;
+import crack.time Date;
+
+const TS_RX :=
+    Regex(r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[\+\-]\d{2}):(\d{2})');
+
+class ISODate : Date {
+    oper init() {}
+
+    @static ISODate parse(String timestamp) {
+        if (m := TS_RX.match(timestamp)) {
+            buf := AppendBuffer(timestamp.size);
+            buf.extend(m.group(1));
+            buf.extend(m.group(2));
+            buf.append(0);
+            result := ISODate();
+            temp := strptime(buf.buffer, '%Y-%m-%dT%H:%M:%S%z'.buffer, result);
+            if (temp is null)
+                throw InvalidArgumentError(
+                    FStr() `Could not parse time string $(timestamp.getRepr())`
+                );
+            return result;
+        } else {
+            throw InvalidArgumentError(
+                FStr() `Invalid timestamp string: $(timestamp.getRepr())`
+            );
+        }
+    }
+
+    void formatTo(Formatter out) {
+        result := strftime('%Y-%m-%dT%H:%M:%S%z');
+        out `$(result.slice(0, -2)):$(result.slice(-2))`;
+    }
+
+    String toString() {
+        return FStr() `$this`;
+    }
+}
