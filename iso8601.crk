@@ -12,6 +12,8 @@ const TS_RX :=
 class ISODate : Date {
     oper init() {}
 
+    oper init(int64 seconds) : Date(seconds) {}
+
     @static ISODate parse(String timestamp) {
         if (m := TS_RX.match(timestamp)) {
             buf := AppendBuffer(timestamp.size);
@@ -30,6 +32,29 @@ class ISODate : Date {
                 FStr() `Invalid timestamp string: $(timestamp.getRepr())`
             );
         }
+    }
+
+    ## Similar to Date.parseTime() only returns an ISODate instead of a Date.
+    @static ISODate parse(CString timestamp, CString format) {
+        result := ISODate();
+        temp := strptime(timestamp.buffer, format.buffer, result);
+        if (temp is null)
+            throw InvalidArgumentError(
+                FStr() `Could not parse time string $(timestamp.getRepr())`
+            );
+        return result;
+    }
+
+    @static ISODate parse(String timestamp, CString format) {
+        return parse(timestamp.toCString(), format);
+    }
+
+    @static ISODate parse(CString timestamp, String format) {
+        return parse(timestamp, format.toCString());
+    }
+
+    @static ISODate parse(String timestamp, String format) {
+        return parse(timestamp.toCString(), format.toCString());
     }
 
     void formatTo(Formatter out) {

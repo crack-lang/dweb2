@@ -18,5 +18,21 @@ import .iso8601 ISODate, TS_RX;
     @assert(ISODate.parse(val).toString() == val);
 })
 
+@test(StandardParse, {
+    input := '20220116_134201-0500';
+    output := '2022-01-16T13:42:01-05:00';
+
+    # `input` and `output` are both StaticString and thus CStrings.  Test all
+    # variations of the overloads.
+    @assert(ISODate.parse(input, '%Y%m%d_%H%M%S%z').toString() == output);
+    @assert(ISODate.parse(String(input), '%Y%m%d_%H%M%S%z').toString() ==
+            output);
+    @assert(ISODate.parse(input, String('%Y%m%d_%H%M%S%z')).toString() ==
+            output);
+    @assert(ISODate.parse(String(input), String('%Y%m%d_%H%M%S%z'))
+                .toString() ==
+            output);
+})
+
 runAllTests();
 
