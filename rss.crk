@@ -1,0 +1,82 @@
+## RSS Formatter
+
+import crack.http.core Request, RequestHandler;
+import crack.time Date;
+import .html HTMLFormatter;
+
+@import crack.ann cvars, impl;
+
+String dfmt(Date day) {
+    return day.strftime('%a, %e %B %Y %H:%M:%S %z');
+}
+
+## Generates an RSS page.
+##
+## The "Posts" class should be an iterator over a collection of PostInfo
+## objects.
+class RSSGenerator[Posts] @impl RequestHandler {
+
+    ## Channel title.  Required.
+    String title;
+
+    ## Channel description.  Required.
+    String description;
+
+    ## Channel link.  Required.
+    String link;
+
+    ## Channel copyright.
+    String copyright;
+
+
+    Date
+        ## Last modified date of the feed.
+        lastBuildDate,
+
+        ## Last pubDate of the latest article.
+        pubDate;
+
+    @cvars {
+        Posts __posts;
+    }
+
+    String generate() {
+        out := HTMLFormatter();
+        out I`\
+            <rss version="2.0">
+                <channel>
+                    <title>$title</title>
+                    <description>$description</description>
+                    <link>$link</link>
+            `;
+        I := String(8, b' ');
+        if (copyright)
+            out `$I<copyright>$copyright</copyright>\n`;
+        if (lastBuildDate)
+            out `$I<lastBuildDate>$(dfmt(lastBuildDate))</lastBuildDate>\n`;
+        if (pubDate)
+            out `$I<pubDate>dfmt(pubDate)</pubDate>\n`;
+        for (post :in __posts) {
+            out I`\
+                <item>
+                    <title>$(post.title)</title>
+                    <description>$(post.description)</description>
+                    <link>$(post.link)</link>
+                    <pubDate>$(dfmt(post.timestamp))</pubDate>
+                </item>
+                `;
+        }
+
+        out I`\
+                </channel>
+            </rss>
+            `;
+
+        return out.getRaw();
+    }
+
+    bool oper call(Request req) {
+        req.sendReply(200, 'application/rss+xml', generate());
+        return true;
+    }
+}

@@ -188,6 +188,10 @@ disp['proctest'] = Chain![authHandler,
                           StandardPage('Proctest', 'static/proctest.htm')
                           ];
 blog := Blog(makePath('blog'));
+blog.addFeeds('http://mindhog.net/dweb/blog', 'House of the Hog Blog',
+              'Another funny blog without much information.'
+              );
+
 disp['blog'] = Chain![authHandler, blog];
 
 shortenDB := BFile.makeFile(makePath('shortened.db'));

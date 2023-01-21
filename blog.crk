@@ -6,23 +6,43 @@ import crack.fs makePath, Path;
 import crack.functor Functor3;
 import crack.io FStr, Reader, StringFormatter;
 import crack.io.readers FullReader;
-import crack.lang cmp, Exception;
+import crack.lang cmp, Exception, InvalidArgumentError;
 import crack.nml.block TextBlock;
 import crack.nml.html HTMLFormatter;
 import crack.nml.parse DocParser;
+import crack.rawptr RawPtr;
+import crack.regex Regex;
 import crack.http.core Request, RequestHandler;
 import crash.crash Builtin, EvalContext, ObjOf, ParmInfo;
 import crash.types IntObj;
 import .html DWebFormatter = HTMLFormatter, RequestHelper, Raw;
+import .iso8601 ISODate;
+import .rss RSSGenerator;
 
 @import crack.ann cvars, impl, struct;
 @import crash.ann function;
+
+const DATE_RX := Regex(r'\d{4}-\d{2}-\d{2}');
 
 @struct Post {
     String filename;
     String title;
     Raw brief;
     Raw contents;
+    ISODate timestamp;
+}
+
+## Wraps a post with additional info that's needed for an RSS/Atom feed.
+class PostWrapper {
+
+    @cvars {
+        Post __rep;
+        String link;
+    }
+
+    String oper .title() { return __rep.title }
+    String oper .description() { return __rep.brief }
+    ISODate oper .timestamp() { return __rep.timestamp }
 }
 
 alias PageWrapper = Functor3[String, Raw, String, Request];
@@ -32,6 +52,7 @@ String defaultPageWrapper(Raw contents, String title, Request req) {
 }
 
 # #nml
+# \timestamp(2023-01-16T14:39:09-05:00)
 # 2022-01-03 - Title
 # ==================
 #
@@ -46,9 +67,43 @@ class Blog @impl RequestHandler {
     String briefTitleHeader = '2';
     String relPath = 'blog';
 
+    ## If provided, this is the complete URL of the blog endpoint (including
+    ## the relPath).  It is required for producing an RSS/Atom feed.
+    String fullURL;
+
     ## Function that generates a page from its parcel.  This is used to
     ## generate all stand-alone blog pages.
     PageWrapper pageWrapper = PageWrapper.Wrap(defaultPageWrapper);
+
+    Array[Post] oper .posts();
+
+    class FeedAdapter {
+
+        RawPtr[Blog] __blog;
+
+        oper init(Blog blog) : __blog = RawPtr[Blog](blog) {}
+
+        class Iter {
+            alias ArrayIter = Array[Post].ArrayIter;
+            @cvars {
+                ArrayIter __rep;
+                String fullURL;
+            }
+
+            PostWrapper elem() {
+                elem := __rep.elem();
+                return PostWrapper(elem, FStr()
+                                   `$fullURL/$(elem.filename)`);
+            }
+            void next() { __rep.next() }
+            bool isTrue() { return __rep.isTrue() }
+        }
+
+        Iter iter() { return Iter(__blog.posts.iter(), __blog.fullURL) }
+    }
+
+    RSSGenerator[FeedAdapter] rssHandler;
+    RequestHandler atomHandler;
 
     @cvars {
         Path __dir;
@@ -60,10 +115,25 @@ class Blog @impl RequestHandler {
         TextBlock titleBlock,
                 briefBlock = {null, 0, 'doc', false},
                 moreBlock = {null, 0, 'doc', false};
+        ISODate timestamp;
 
         # Pick apart the separate parts of the post.
         for (word :in doc.words) {
             tb := TextBlock.cast(word, null);
+
+            # Accept a timestamp anywhere.
+            if (tb?.type == 'timestamp') {
+                tsFormatter := StringFormatter();
+                tb.flattenTo(tsFormatter);
+                try {
+                    timestamp = ISODate.parse(tsFormatter.string());
+                } catch (InvalidArgumentError ex) {
+                    throw Exception(
+                        FStr() `Invalid timestamp format in $filename`
+                    );
+                }
+            }
+
             if (state == 0) {
                 if (tb?.type == '1') {
                     titleBlock = tb;
@@ -84,6 +154,19 @@ class Blog @impl RequestHandler {
         if (!titleBlock)
             throw Exception(FStr() `Missing title in $filename`);
 
+        titleFormatter := StringFormatter();
+        titleBlock.flattenTo(titleFormatter);
+        title := titleFormatter.string();
+
+        if (!timestamp) {
+            # Use the timestamp from the title.
+            if (m := DATE_RX.match(title))
+                timestamp = ISODate.parse(m.group(), '%Y-%m-%d');
+            else
+                # Use the timestamp from the file.
+                timestamp = ISODate((__dir/filename).getModTime());
+        }
+
         Raw parseBlock(TextBlock block) {
             tmp := StringFormatter();
             formatter := HTMLFormatter(tmp);
@@ -92,13 +175,10 @@ class Blog @impl RequestHandler {
             return Raw(tmp.string());
         }
 
-        titleFormatter := StringFormatter();
-        titleBlock.flattenTo(titleFormatter);
-        title := titleFormatter.string();
         brief := parseBlock(briefBlock);
         contents := parseBlock(moreBlock);
 
-        return Post(filename, title, brief, contents);
+        return Post(filename, title, brief, contents, timestamp);
     }
 
     Post parsePost(FullReader src, String filename) {
@@ -107,7 +187,9 @@ class Blog @impl RequestHandler {
             return _parseNMLPost(src, filename);
         else
             # Assume plain HTML.
-            return Post(filename, Raw(''), Raw(src.readAll()), Raw(''));
+            return Post(filename, Raw(''), Raw(src.readAll()), Raw(''),
+                        ISODate((__dir/filename).getModTime())
+                        );
     }
 
     Array[Post] oper .posts() {
@@ -152,23 +234,53 @@ class Blog @impl RequestHandler {
         return Raw(out.string());
     }
 
+    ## Initializes RSS and Atom feeds objects.  There's a certain amount of
+    ## additional information that must be supplied for these.
+    void addFeeds(
+        ## Full URL of the blog endpoint, including scheme, hostname and
+        ## relative path.  The trailing slash should be omitted.
+        String baseURL,
+
+        ## Feed title.
+        String title,
+
+        ## Feed description.
+        String description
+    ) {
+        fullURL = baseURL;
+        rssHandler = RSSGenerator[FeedAdapter](FeedAdapter(this));
+        rssHandler.title = title;
+        rssHandler.description = description;
+        rssHandler.link = FStr() `$baseURL/rss`;
+    }
+
     bool oper call(Request req) {
+        __posts = null;  # Make sure we reload to pick up any new posts.
         parsedPath := req.getParsedPath();
-        if (!parsedPath) {
+        headerFormatter := StringFormatter();
+        headerFormatter `<h1>News</h1>\n`;
+        if (rssHandler)
+            headerFormatter `<a href="$relPath/rss">RSS</a>\n`;
+        if (!parsedPath || parsedPath.count() == 1 && parsedPath[0] == '') {
             # Render the blog page.
             renderedPage := pageWrapper(
-                Raw('<h1>News</h1>\n' + renderBriefs(1000)),
+                Raw(headerFormatter.string() + renderBriefs(1000)),
                 'News',
                 req
             );
             req.sendReply(200, 'text/html', renderedPage);
             return true;
-        } else if (parsedPath.count() == 1 && parsedPath[0] == '') {
-            req.sendRedirect(301, req.path.slice(0, -1));
         }
 
         if (parsedPath.count() != 1)
             return false;
+
+        # Deal with the special "rss" and "atom" paths.
+        if (parsedPath[0] == 'rss' && rssHandler) {
+            return rssHandler(req);
+        } else if (parsedPath[0] == 'atom' && atomHandler) {
+            return atomHandler(req);
+        }
 
         entryPath := __dir/parsedPath[0];
         post := parsePost(entryPath.makeFullReader(), entryPath.getName());
@@ -208,9 +320,18 @@ alias BlogObj = ObjOf[Blog];
         return 0;
     }
 
+    ## Configure RSS/Atom feeds for the blog.
+    @function(Blog) int addFeeds(String baseURL, String title,
+                                 String description
+                                 ) {
+        self.addFeeds(baseURL, title, description);
+        return 0;
+    }
+
     result := BlogObj(blog);
     result.define('briefs', briefs(blog));
     result.define('setBriefTitleHeader', setBriefTitleHeader(blog));
     result.define('setRelPath', setRelPath(blog));
+    result.define('addFeeds', addFeeds(blog));
     return result;
 }
