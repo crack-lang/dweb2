@@ -261,7 +261,15 @@ class Blog @impl RequestHandler {
         headerFormatter `<h1>News</h1>\n`;
         if (rssHandler)
             headerFormatter `<a href="$relPath/rss">RSS</a>\n`;
-        if (!parsedPath || parsedPath.count() == 1 && parsedPath[0] == '') {
+
+        # If the link was terminated with a "/" (e.g. "/blog/") send a
+        # permanent redirect to the slashless path.
+        if (parsedPath.count() == 1 && parsedPath[0] == '') {
+            req.sendRedirect(301, req.path.slice(0, -1));
+            return true;
+        }
+
+        if (!parsedPath) {
             # Render the blog page.
             renderedPage := pageWrapper(
                 Raw(headerFormatter.string() + renderBriefs(1000)),
