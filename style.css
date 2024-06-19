@@ -145,3 +145,20 @@ div.bottombar {
 div.selected {
   background-color: #444;
 }
+
+/* For a row of buttons. */
+div.buttons {
+  margin: 0px;
+  padding: 6px;
+  border: solid;
+  border-width: 1px;
+  border-color: #00f;
+}
+
+div.buttons a {
+  background-color: #040;
+  border-bottom: 4px solid #020;
+  border-right: 4px solid #020;
+  border-left: 4px solid #060;
+  border-top: 4px solid #060;
+}

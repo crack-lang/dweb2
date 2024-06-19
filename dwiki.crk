@@ -412,15 +412,18 @@ class DocWrapper @impl RequestHandler {
             out I`<div id="docpane">
                     <div id="contents">Rendering...</div>
                   </div>
-                  <p><a id="editbtn" href="javascript:onEdit()">Edit</a></p>
                   <form>
                     <input id="head" type="hidden" value="$head">
                     <input id="author" type="hidden" value="$userName">
                   </form>
                   `;
             r.parcelAttrs = Raw('onload="onload()"');
-            r.staticRow =
-                Raw(FStr() `<pre id="rawContents" hidden>$contents</pre>`);
+            r.staticRow = Raw(FStr() I`\
+                <div class="buttons">
+                    <a id="editbtn" href="javascript:onEdit()">Edit</a>
+                </div>
+                <pre id="rawContents" hidden>$contents</pre>`
+            );
 
             r.reply('wiki/' + docName, out.getRaw(), makeScriptIncludes());
 

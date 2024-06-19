@@ -274,6 +274,7 @@ class RequestHelper {
                     </div>
 
                     <div class="bottombar">
+                        $(staticRow ? staticRow : Raw(''))
                         <span><a href="$prefix/">DWeb root</a></span>
                         <span>
                             <a href="$prefix/list/show">Shopping List</a>
@@ -284,7 +285,6 @@ class RequestHelper {
                         <span>
                             <a href="$prefix/user">User info</a>
                         </span>
-                        $(staticRow ? staticRow : Raw(''))
                     </div>
 
                 </div>
