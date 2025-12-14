@@ -1,5 +1,6 @@
 ## URL Shortener.
 
+import crack.cont.array Array;
 import crack.enc.base64 altEncode;
 import crack.http.core Request, RequestHandler;
 import crack.io cerr;
@@ -8,7 +9,7 @@ import crack.protobuf readMessageFromString, Field, Message, ProtoWriter;
 import crack.hash.sha256 SHA256;
 import crack.http.auth User;
 import kvjournal.kvdb DBIFace;
-import .html RequestHelper;
+import .html HTMLFormatter, RequestHelper;
 
 @import crack.ann cvars, impl;
 @import crack.protobuf.ann protobuf;
@@ -35,6 +36,8 @@ String hash(String text) {
     return _hash(text);
 }
 
+const _DEFAULT_SCHEME := Array[String]!['http'];
+
 ## Handler for the "shorten" request.
 ##
 ## This is a post request that returns a shortened URL for the url specified
@@ -46,14 +49,30 @@ class Shorten @impl RequestHandler {
         ## Stores the mapping from shortened hash keys to target urls.
         DBIFace db;
 
-        ## The prefix to prepend to the shortened digest to be returned.  e.g.
-        ## for names like "http://sho.rt/H4sh" we'd use a prefix of
-        ## "http://sho.rt/".  This should take you to the LookupShortened
-        ## handler.
+        ## Path prefix for shortener urls.  In a typical dweb setup this
+        ## would be '/dweb/s/'.
         String prefix;
 
         ## URL to redirect to for errors.
         String errorURL;
+    }
+
+    void __sendReply(RequestHelper r, String hash) {
+        # Obtain the scheme:host:port from the request.
+        scheme := r.req.headers.get('x-forwarded-proto', _DEFAULT_SCHEME)[0];
+        base := scheme + '://' + r.req.headers.get('host')[0];
+        fullURL := base + prefix + hash;
+
+        api := r.getOptionalSingle('api');
+        if (api) {
+            r.req.sendReply(200, 'text/plain', fullURL);
+            return;
+        }
+
+        out := HTMLFormatter();
+        out `<p>Your url is: <a href="$fullURL">$fullURL</a>`;
+
+        r.reply('URL Shortener', out.getRaw());
     }
 
     bool oper call(Request req) {
@@ -74,7 +93,7 @@ class Shorten @impl RequestHandler {
                 readMessageFromString(entry, serializedEntry);
                 # If we've already got a match, we're done.
                 if (entry.target == url) {
-                    req.sendReply(200, 'text/plain', prefix + shortDigest);
+                    __sendReply(r, shortDigest);
                     return true;
                 }
 
@@ -99,7 +118,7 @@ class Shorten @impl RequestHandler {
         db[shortDigest] = entry.toString();
         db.commit();
 
-        req.sendReply(200, 'text/plain', prefix + shortDigest);
+        __sendReply(r, shortDigest);
         return true;
     }
 }

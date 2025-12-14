@@ -285,6 +285,9 @@ class RequestHelper {
                         <span>
                             <a href="$prefix/user">User info</a>
                         </span>
+                        <span>
+                            <a href="$prefix/shorten">URL Shortener</a>
+                        </span>
                     </div>
 
                 </div>
@@ -320,6 +323,9 @@ class RequestHelper {
         __req.sendReply(200, 'text/html', makePage());
         return true;
     }
+
+    ## Returns the underlying request.
+    Request oper .req() { return __req }
 }
 
 ## Return the script elements for an angular script running at 'url'.  This
