@@ -49,6 +49,7 @@ input[type=submit],input[type=reset],input[type=button] {
     border-right: 4px solid black;
     border-left: 4px solid #222;
     border-top: 4px solid #222;
+    margin-top: 5px;
 }
 
 /* Give text inputs a sunken appearance */
@@ -57,6 +58,7 @@ input[type=text],input[type=password] {
     border-right: 4px solid #222;
     border-left: 4px solid black;
     border-top: 4px solid black;
+    margin-top: 5px;
 }
 
 pre {
