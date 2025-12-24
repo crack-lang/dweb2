@@ -4,6 +4,7 @@ import crack.exp.cmd ArgInfo, ArgInfoBase, ArgParser, ArgVal,
     CommandArgParser, CommandInterface, ConverterBase, SubcommandArgInfo,
     ValueMap;
 import crack.exp.cmd.doc addHelpCommand;
+import crack.fs makePath;
 import crack.cont.treemap TreeMap;
 import crack.strutil StringArray;
 
@@ -15,6 +16,7 @@ import crack.io cerr, cin, cout;
 import crack.io.readers LineReader;
 import crack.sys argv;
 import .data Data;
+import .dwiki Mercurial;
 
 data := Data();
 data.init();
@@ -56,6 +58,25 @@ String prompt(String prompt) {
         cerr `password matches\n`;
     else
         cerr `Invalid password\n`;
+    return 0;
+}
+
+## Create a new wiki repo.
+@command(parent = dweb_tool) int mkwiki(String name) {
+    path := makePath('dwiki/repo')/name;
+    if (path.exists()) {
+        cerr `Repo $path already exists.`;
+        return 1;
+    }
+
+    path.makeDir();
+    main := path/'main.md';
+    main.writer().write('# Main File, please edit');
+    merc := Mercurial(path, 'admin');
+    merc.init();
+    merc.add(main);
+    merc.commit('Adding main file.');
+    cerr `Created repo $path\n`;
     return 0;
 }
 
