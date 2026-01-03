@@ -1,0 +1,281 @@
+## HTTP Daemon.
+##
+## This replaces crack.http.server with a crack.net.comm2 based solution.
+
+import crack.ascii parseInt, strip, toLower;
+import crack.http.core Abort, HandlerArray, Request, RequestHandler;
+import crack.io cerr, AppendBufferWriter, Formatter, Writer;
+import crack.lang Buffer, Exception, ManagedBuffer, SystemError;
+import crack.logger.ctx Log;
+import crack.net InetAddress, Poller, Socket, AF_INET, SOCK_STREAM;
+import crack.net.comm2 CommListener, Connection, ConnectionFactory,
+    NewConnection, UserHandler;
+import crack.strutil StringArray;
+
+@import crack.ann cvars, impl;
+
+const int _ST_REQUEST = 0;
+const int _ST_HEADERS= 1;
+const int _ST_BODY = 2;
+
+class Client {
+    int state;
+    Request request;
+
+    ## the index of the first byte in the buffer that has been read but
+    ## not processed.
+    uint pos;
+
+    @cvars {
+        InetAddress addr;
+        HandlerArray handlers;
+        ManagedBuffer inbuf;
+        Writer out;
+        Log log;
+    }
+
+    void formatTo(Formatter fmt) {
+        fmt `Client: $addr`;
+    }
+
+    @final void compressBuffer(uintz start) {
+        inbuf.compact(start);
+        pos = 0;
+    }
+
+    @final void __badRequest() {
+        log.warn `Invalid request from $(this)\n`;
+    }
+
+    @final void processRequestLine(uintz start, uintz end) {
+        request = Request(out, addr);
+
+        # find the first space
+        methodEnd := inbuf.lfind(b' ', start);
+        if (methodEnd == -1 || methodEnd >= end) {
+            __badRequest();
+            return;
+        }
+        request.method = String(inbuf.buffer + start, methodEnd, false);
+
+        # find the next non-space
+        pathStart := methodEnd;
+        while (inbuf.buffer[pathStart] == b' ' && pathStart < end)
+            ++pathStart;
+        if (pathStart == end) {
+            __badRequest();
+            return;
+        }
+
+        # find the path end
+        pathEnd := inbuf.lfind(b' ', pathStart);
+        if (pathEnd == -1 || pathEnd > end) {
+            __badRequest();
+            return
+        }
+
+        # find the protocol version
+        request.path = String(inbuf.buffer + pathStart,
+                              pathEnd - pathStart,
+                              false
+                              );
+
+        # deal with HTTP 1.0
+        if (pathEnd == end) {
+            state = _ST_REQUEST;
+            return;
+        }
+
+        # find the next non-space
+        verStart := pathEnd;
+        while ((c := inbuf.buffer[verStart]) == b' ' && verStart < end)
+            ++verStart;
+        if (verStart == end) {
+            __badRequest();
+            return;
+        }
+        request.version = String(inbuf.buffer + verStart,
+                                 end - verStart,
+                                 false
+                                 );
+        log.debug `got header $(request.version)`;
+        state = _ST_HEADERS;
+    }
+
+    @final void processRequest() {
+        try {
+            for (handler :in handlers) {
+                if (handler(request))
+                    break;
+            }
+        } catch (Abort ex) {
+            log.warn `request terminated with abort: $(ex.code) $(ex.text)`;
+            request.sendReply(ex.code, 'text/plain', ex.text);
+        } catch (Exception ex) {
+            log.error `Exception caught in handler: $ex`;
+        }
+
+        if (request.method != 'POST' && request.method != 'PUT') {
+            state = _ST_REQUEST;
+            request = Request(out, addr);
+        }
+    }
+
+    @final void processHeaderLine(uintz start, uintz end) {
+        line := String(inbuf.buffer + start, end - start, false);
+        log.debug `processing header line: $(line.getRepr())`;
+        if (!line) {
+            state = _ST_BODY;
+            if (request.method == 'POST' || request.method == 'PUT') {
+                # For requests with a body, get the content-length.
+                contentLength := request.headers.get('content-length',
+                                                     null
+                                                     );
+                if (contentLength)
+                    request.remainingPostData = parseInt(contentLength[-1]);
+                else
+                    request.remainingPostData = 0xFFFFFFFF;
+
+                # Discard the request line and headers.  'inbuf' now
+                # contains only the body.
+                compressBuffer(end + (inbuf.buffer[end] == b'\r' ? 2 : 1));
+            }
+            processRequest();
+            return;
+        }
+        # find the first colon
+        sep := line.lfind(b':');
+        log.debug `adding $(line.slice(0, sep)) $(line.slice(sep + 1))`;
+        request.headers[toLower(line.slice(0, sep))] =
+            StringArray![strip(line.slice(sep + 1))];
+    }
+
+    @final void parseNext() {
+        while (true) {
+            if (state == _ST_REQUEST || state == _ST_HEADERS) {
+
+                # find the first newline
+                int p;
+                for (p = pos; inbuf.buffer[p] != b'\n' && p < inbuf.size; ++p);
+
+                # if we got one, process the request line
+                if (p < inbuf.size) {
+
+                    start := pos;
+                    pos = p + 1;
+
+                    # ignore a carrriage-return
+                    if (p > 1 && inbuf.buffer[p - 1] == b'\r')
+                        --p;
+
+                    if (state == _ST_REQUEST)
+                        processRequestLine(start, p);
+                    else
+                        processHeaderLine(start, p);
+
+                } else {
+                    # XXX verify that we haven't yet exceeded the maximum
+                    # request line length
+                    # no complete line yet
+                    break;
+                }
+            } else {
+                void callPostData(Request request, Buffer buf, Log log) {
+                    try {
+                        request.postDataHandler(request, buf);
+                    } catch (Abort ex) {
+                        log.warn I`request terminated with abort: $(ex.code) \
+                                   $(ex.text)`;
+                    } catch (Exception ex) {
+                        log.error `Exception caught in post handler: $ex`;
+                    }
+                }
+
+                # State is _ST_BODY.  Deal with the "end of parcel"
+                # condition correctly and if the handler has defined a post
+                # data handler, call it.
+                if (request.remainingPostData >= inbuf.size) {
+                    if (request.postDataHandler) {
+                        log.debug I`calling post data handler with inbuf \
+                                    [$inbuf]`;
+                        callPostData(request, inbuf, log);
+                    }
+                    request.remainingPostData -= inbuf.size;
+                    compressBuffer(inbuf.size);
+                } else {
+                    # The inbuf contains more than the contents (it
+                    # overlaps the beginning of the next request)
+                    if (request.postDataHandler)
+                        callPostData(
+                            request,
+                            Buffer(inbuf.buffer, request.remainingPostData),
+                            log,
+                        );
+                    compressBuffer(request.remainingPostData);
+                    request.remainingPostData = 0;
+                }
+
+                # Begin the new request if we're done with post data.
+                if (!request.remainingPostData) {
+                    state = _ST_REQUEST;
+                    request = Request(out, addr);
+                }
+                return;
+            }
+        }
+
+        compressBuffer(pos);
+    }
+}
+
+class ClientHandler @impl UserHandler {
+    Client __requestParser;
+
+    @cvars {
+        InetAddress addr;
+        HandlerArray handlers;
+        Log log;
+    }
+
+    void process(Connection comm) {
+        if (!__requestParser)
+            __requestParser = Client(addr, handlers, comm.inBuf,
+                                     AppendBufferWriter(comm.outBuf),
+                                     log);
+        __requestParser.parseNext();
+    }
+
+    void terminate(Connection comm) {}
+
+    void addResponder(Object responder) {}
+}
+
+class ClientHandlerFactory @impl ConnectionFactory {
+    @cvars {
+        HandlerArray handlers;
+    }
+
+    Connection makeConnection(NewConnection conn) {
+        return Connection(conn.log,
+                          ClientHandler(
+                            InetAddress.cast(conn.accepted.addr),
+                            handlers,
+                            conn.log
+                          ));
+    }
+}
+
+## Add a new server to the poller.
+void addServer(Poller poller, InetAddress addr, HandlerArray handlers) {
+    sock := Socket(AF_INET, SOCK_STREAM, 0);
+    if (!sock.setReuseAddr(true))
+        throw SystemError('Setting reuse address');
+    if (!sock.bind(addr))
+        throw SystemError('Binding socket');
+    if (!sock.listen(5))
+        throw SystemError('Listening');
+    poller.add(sock,
+               CommListener(Log(null, cerr, cerr, cerr, cerr, 'httpd'),
+                            ClientHandlerFactory(handlers)),
+               );
+}

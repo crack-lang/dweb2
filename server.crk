@@ -4,12 +4,13 @@ import crack.cont.hashmap HashMap;
 import crack.fs makePath, Path;
 import crack.io cout, StringFormatter;
 import crack.http.auth AuthHandler, User;
-import crack.http.core HandlerFunc, Request, RequestHandler;
+import crack.http.core HandlerArray, HandlerFunc, Request, RequestHandler;
 import crack.http.server Server;
 import crack.http.util parseQuery, Chain, MethodHandler, MultiMethod,
     PathDispatcher, PostHandler, QueryParmMap, NOT_FOUND;
 import crack.functor Functor1, Function1;
 import crack.logger setLogLevel, DEBUG;
+import crack.net InetAddress, INADDR_ANY;
 import crack.protobuf readMessageFromString;
 import crack.sys argv;
 import crash.crash createRootContext, EvalContext, SimpleValue;
@@ -19,7 +20,9 @@ import kvjournal.db BFile;
 import .blog makeBlog, Blog;
 import .data Bookmark, Data;
 import .dwiki WikiRoot;
+import .globals poller;
 import .html prefix, u, HTMLFormatter, Raw, RequestHelper;
+import .httpd addServer;
 import .login DWebLoginHandler;
 import .admin admin_registerAll = registerAll;
 import .checklist checklist_registerAll = registerAll;
@@ -30,7 +33,7 @@ import .shorten Shorten, LookupShortened;
 
 @import crack.ann impl, implements;
 
-Server server = {(argv.count() > 1) ? parseInt(argv[1]) : 9191};
+port := (argv.count() > 1) ? parseInt(argv[1]) : 9191;
 prefix = (argv.count() > 2) ? argv[2] : '/dweb';
 data := Data();
 data.init();
@@ -206,8 +209,9 @@ disp['shorten'] =
 disp['s'] = MethodHandler('GET', LookupShortened(shortenDB, '/error'));
 disp['dw'] = Chain![softAuthHandler, WikiRoot(data, prefix + '/dw')];
 
-server.addHandler(HandlerFunc(log));
-server.addHandler(disp);
-server.addHandler(NOT_FOUND);
+addServer(poller, InetAddress(INADDR_ANY, port),
+          HandlerArray![HandlerFunc(log), disp, NOT_FOUND]);
+
 cout `Serving.\n`;
-server.run();
+while (true)
+    poller.waitAndProcess(null);
