@@ -1,3 +1,6 @@
 import crack.net Poller;
+import crash.crash createRootContext;
 
 poller := Poller();
+crashCtx := createRootContext();
+

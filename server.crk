@@ -1,8 +1,8 @@
-import crack.ascii parseInt;
+import crack.ascii parseInt, strip;
 import crack.cont.array Array;
 import crack.cont.hashmap HashMap;
 import crack.fs makePath, Path;
-import crack.io cout, StringFormatter;
+import crack.io cout, FStr, StringFormatter;
 import crack.http.auth AuthHandler, User;
 import crack.http.core HandlerArray, HandlerFunc, Request, RequestHandler;
 import crack.http.server Server;
@@ -13,20 +13,21 @@ import crack.logger setLogLevel, DEBUG;
 import crack.net InetAddress, INADDR_ANY;
 import crack.protobuf readMessageFromString;
 import crack.sys argv;
-import crash.crash createRootContext, EvalContext, SimpleValue;
+import crash.crash eval, SimpleValue;
 import crash.types IntObj;
 import kvjournal.db BFile;
 
 import .blog makeBlog, Blog;
 import .data Bookmark, Data;
 import .dwiki WikiRoot;
-import .globals poller;
+import .globals crashCtx, poller;
 import .html prefix, u, HTMLFormatter, Raw, RequestHelper;
 import .httpd addServer;
 import .login DWebLoginHandler;
 import .admin admin_registerAll = registerAll;
 import .checklist checklist_registerAll = registerAll;
 import .clipboard clipboard_registerAll = registerAll;
+import .mailer domain, sendMessage;
 import .pageproc processPage;
 import .util SoftAuthHandler;
 import .shorten Shorten, LookupShortened;
@@ -35,6 +36,10 @@ import .shorten Shorten, LookupShortened;
 
 port := (argv.count() > 1) ? parseInt(argv[1]) : 9191;
 prefix = (argv.count() > 2) ? argv[2] : '/dweb';
+
+if (argv.count() > 3)
+    eval(makePath(argv[3]).readAll(), crashCtx);
+
 data := Data();
 data.init();
 
@@ -135,9 +140,8 @@ bool staticHandler(Request req) {
     return false;
 }
 
-EvalContext evalCtx = createRootContext();
-evalCtx.define('num', SimpleValue(IntObj(0)));
-evalCtx.define('Blog', makeBlog());
+crashCtx.define('num', SimpleValue(IntObj(0)));
+crashCtx.define('Blog', makeBlog());
 
 ## Wraps file contents in a standard page.
 class StandardPage @impl RequestHandler {
@@ -151,7 +155,7 @@ class StandardPage @impl RequestHandler {
 
     bool oper call(Request req) {
         RequestHelper(req, '/error').reply(title,
-                                           processPage(evalCtx,
+                                           processPage(crashCtx,
                                                        contents.reader()
                                                        )
                                            );
@@ -163,6 +167,35 @@ class StandardPage @impl RequestHandler {
 bool showRequest(Request req) {
     cout `$(req.method)\n`;
     return false;
+}
+
+bool sendMail(Request req) {
+    r := RequestHelper(req, '/error');
+
+    recip := r.getRequiredSingle('recip');
+    if (recip is null)
+        return true;
+    subject := r.getRequiredSingle('subject');
+    if (subject is null)
+        return true;
+    body := r.getRequiredSingle('body');
+    if (body is null)
+        return true;
+
+    user := User.get(req);
+
+    # If you don't specify "from" and "to" headers, the "from" field will be
+    # auto-populated, the "to" field will not.
+    sendMessage('master@0x0x.dev', 'mmuller@enduden.com',
+                FStr() I`\
+                from: $(user.id)@$domain
+                to: $recip
+                subject: $subject
+
+                $body
+                `);
+    r.reply('sendmail', Raw('<h1>Message Sent.</h1>'));
+    return true;
 }
 
 #setLogLevel(DEBUG);
@@ -190,6 +223,15 @@ disp['static'] = HandlerFunc(staticHandler);
 disp['proctest'] = Chain![authHandler,
                           StandardPage('Proctest', 'static/proctest.htm')
                           ];
+disp['sendmail'] =
+    Chain![
+        authHandler,
+        MultiMethod![
+            MethodHandler('GET',
+                          StandardPage('Sendmail', 'static/mailform.htm')),
+            PostHandler(sendMail),
+        ],
+    ];
 blog := Blog(makePath('blog'));
 blog.addFeeds('http://mindhog.net/dweb/blog', 'House of the Hog Blog',
               'Another funny blog without much information.'

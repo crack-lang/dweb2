@@ -18,6 +18,24 @@ You'll need to set up the following:
     users.db & cookies.db
         Create an admin user and passord with mkadmin.  Can be any user id.
 
+If you're sending mail, you'll also need a Crash file containing the mailer
+configuration:
+
+    mailer {
+        domain 'example.com'  # Sender domain.
+        api_addr 'user@example.com'  # Address to ssh to to send mail.
+    }
+
+The `api_addr` should be an address whose default shell accepts a "send"
+command with arguments sender address, recipient addresses (formatted as a
+single string parameter with recipients separated by commas) and the message
+size.  The command should then read the entire message (the number of bytes
+specified in the message size, followed by a newline) from standard input.  It
+should then write "ok" (followed by a newline) to standard output.
+
+The Crash file should be specified on the command line after the port number
+and root path.
+
 Starting the server
 -------------------
 
