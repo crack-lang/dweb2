@@ -49,6 +49,14 @@ class AuthDBImpl @impl AuthInfo {
         return LoginURL.Wrap(makeLoginURL);
     }
 
+    ## Sets the login URL path prefix.
+    ##
+    ## This exists to support toybox.httpd_funcs, but it generally shouldn't
+    ## be used in dweb.
+    void setLoginUrlPathPrefix(String newPrefix) {
+        prefix = prefix;
+    }
+
     User getUser(String user) {
         import crack.io cerr;
         cerr `users = $__users, user = $user\n`;
