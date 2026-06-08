@@ -2,7 +2,7 @@ import crack.ascii parseInt, strip;
 import crack.cont.array Array;
 import crack.cont.hashmap HashMap;
 import crack.fs makePath, Path;
-import crack.io cout, FStr, StringFormatter;
+import crack.io cout, BufferReader, FStr, StringFormatter;
 import crack.http.auth AuthHandler, User;
 import crack.http.core HandlerArray, HandlerFunc, Request, RequestHandler;
 import crack.http.server Server;
@@ -13,9 +13,10 @@ import crack.logger setLogLevel, DEBUG;
 import crack.net InetAddress, INADDR_ANY;
 import crack.protobuf readMessageFromString;
 import crack.sys argv;
-import crash.crash eval, SimpleValue;
+import crash.crash eval, Builtin, EvalContext, ParmInfo, SimpleValue;
 import crash.types IntObj;
 import kvjournal.db BFile;
+import toybox.httpd_funcs httpdInit, wrapPathDispatcher;
 
 import .blog makeBlog, Blog;
 import .data Bookmark, Data;
@@ -31,8 +32,77 @@ import .mailer domain, sendMessage;
 import .pageproc processPage;
 import .util SoftAuthHandler;
 import .shorten Shorten, LookupShortened;
+import .slimp;
 
-@import crack.ann impl, implements;
+@import crack.ann cvars, impl, implements;
+@import crash.ann function;
+
+## Wraps file contents in a standard page.
+class FileStandardPage @impl RequestHandler {
+    String title;
+    Path contents;
+
+    ## Construct a standard page from a title and a filename.
+    oper init(String title, String filename) :
+        title = title,
+        contents = makePath(filename) {
+    }
+
+    bool oper call(Request req) {
+        RequestHelper(req, '/error').reply(title,
+                                           processPage(crashCtx,
+                                                       contents.reader()
+                                                       ),
+                                           );
+        return true;
+    }
+}
+
+## Wraps page contents and scripts in a standard page.
+class StringStandardPage @impl RequestHandler {
+    @cvars {
+        String title;
+        String contents;
+        String scripts;
+    }
+
+    bool oper call(Request req) {
+        RequestHelper(req, '/error').reply(title,
+                                           processPage(crashCtx,
+                                                       BufferReader(contents)),
+                                           processPage(crashCtx,
+                                                       BufferReader(scripts)),
+                                           );
+        return true;
+    }
+}
+
+## Creates a page with the standard decorations for the server.
+##
+## The contents of the page are extrated from the file at 'filename'.
+## Embedded crash markups in the file will be expanded.
+@function FileStandardPage makeFileStandardPage(String title, String filename) {
+    return FileStandardPage(title, filename);
+}
+
+## Creates a page with the standard decorations for the server.
+##
+## The contents of the page are in 'contents', 'scripts' contains HTML to be
+## embedded in the "head" tag (intended for ECMA script references).  Embedded
+## crash markups will be expanded in both 'contents' and 'scripts'.
+@function StringStandardPage makeStringStandardPage(String title,
+                                                  String contents,
+                                                  String scripts) {
+    return StringStandardPage(title, contents, scripts);
+}
+
+crashCtx.define('FileStandardPage', makeFileStandardPage());
+crashCtx.define('StringStandardPage', makeStringStandardPage());
+
+disp := PathDispatcher();
+crashCtx.define('disp', wrapPathDispatcher(disp));
+
+httpdInit(crashCtx);
 
 port := (argv.count() > 1) ? parseInt(argv[1]) : 9191;
 prefix = (argv.count() > 2) ? argv[2] : '/dweb';
@@ -143,26 +213,6 @@ bool staticHandler(Request req) {
 crashCtx.define('num', SimpleValue(IntObj(0)));
 crashCtx.define('Blog', makeBlog());
 
-## Wraps file contents in a standard page.
-class StandardPage @impl RequestHandler {
-    String title;
-    Path contents;
-
-    oper init(String title, String filename) :
-        title = title,
-        contents = makePath(filename) {
-    }
-
-    bool oper call(Request req) {
-        RequestHelper(req, '/error').reply(title,
-                                           processPage(crashCtx,
-                                                       contents.reader()
-                                                       )
-                                           );
-        return true;
-    }
-}
-
 ## Use this for debugging requests.
 bool showRequest(Request req) {
     cout `$(req.method)\n`;
@@ -206,7 +256,6 @@ authHandler := AuthHandler(data.auth);
 # don't require a logged in user.
 softAuthHandler := SoftAuthHandler(data.auth);
 
-disp := PathDispatcher();
 disp['hello'] = Chain![HandlerFunc(softAuth), HandlerFunc(hello)];
 disp['tiny'] = Chain![HandlerFunc(softAuth), HandlerFunc(tinyPage)];
 disp[''] = Chain![HandlerFunc(softAuth), HandlerFunc(hello)];
@@ -221,14 +270,14 @@ disp['list'] = checklist_registerAll(data, authHandler, prefix + '/list');
 disp['clip'] = Chain![authHandler, clipboard_registerAll()];
 disp['static'] = HandlerFunc(staticHandler);
 disp['proctest'] = Chain![authHandler,
-                          StandardPage('Proctest', 'static/proctest.htm')
+                          FileStandardPage('Proctest', 'static/proctest.htm')
                           ];
 disp['sendmail'] =
     Chain![
         authHandler,
         MultiMethod![
             MethodHandler('GET',
-                          StandardPage('Sendmail', 'static/mailform.htm')),
+                          FileStandardPage('Sendmail', 'static/mailform.htm')),
             PostHandler(sendMail),
         ],
     ];
@@ -244,7 +293,8 @@ disp['shorten'] =
     Chain![
         authHandler,
         MultiMethod![
-            MethodHandler('GET', StandardPage('Shorten', 'static/shorten.htm')),
+            MethodHandler('GET',
+                          FileStandardPage('Shorten', 'static/shorten.htm')),
             PostHandler(Shorten(shortenDB, prefix + '/s/', '/error')),
         ],
     ];
