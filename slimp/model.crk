@@ -1,0 +1,592 @@
+
+import crack.cont.array Array;
+import crack.cont.hashmap HashMap;
+import crack.enc.base64 altEncode;
+import crack.enc.json.lib JSONFormatter;
+import crack.enc.json2 JSONObject, JSONObjectMap;
+import crack.fs makePath;
+import crack.io cerr, Formatter, FStr;
+import crack.lang cmp, makeHashVal, Exception;
+import crack.logger info, warn;
+import crack.protobuf Field, Message, ProtoWriter;
+import crack.time Time;
+
+import .json formatJSON, JSONFormatable;
+
+@import crack.ann assert, cvars, define, impl, interface;
+
+## Raised by any of the JSONObj get methods if the field's value type is not
+## what is expected.
+class BadFieldTypeError : Exception {
+    oper init(String message) : Exception(message) {}
+}
+
+class JSONObj;
+JSONObj _makeJSONObj();
+
+# Number of seconds for an anonymous user to expire if there's no access.
+const _ANON_USER_EXPIRY := 300;
+
+class JSONObj = JSONObject {
+
+    ## Returns the string value of field 'name' or null if the field is not
+    ## present.  Throws BadFieldTypeError if the field is present but its
+    ## value is not a string.
+    String maybeGetString(String name) {
+        result := get(name);
+        if (result is null)
+            return null;
+        if ((typesafeResult := String.cast(result, null)) !is null)
+            return typesafeResult;
+        else
+            throw BadFieldTypeError(
+                FStr() I`Expected String for field $(name.getRepr()), got \
+                         $(result.class.name)`
+            );
+    }
+
+    ## Returns the string value of field 'name', throws a KeyError if the
+    ## field is not present.  Throws BadFieldTypeError if the field is
+    ## present but its value is not a string.
+    String getString(String name) {
+        result := this[name];
+        if ((typesafeResult := String.cast(result, null)) !is null)
+            return typesafeResult;
+        else
+            throw BadFieldTypeError(
+                FStr() I`Expected String for field $(name.getRepr()), got \
+                         $(result.class.name)`
+            );
+    }
+
+    @static JSONObj create() { return _makeJSONObj() }
+}
+
+JSONObj _makeJSONObj() {
+    return JSONObj(JSONObjectMap());
+}
+
+## The basic SLIMP message.
+class Message @impl JSONFormatable {
+    @cvars {
+        ## Optional message recipient.
+        String to;
+
+        ## Optional message sender.
+        String from;
+
+        ## Optional message identifier.
+        String id;
+
+        ## Optional id of the message that this is in response to.
+        String ref;
+
+        ## Optional message type.
+        String type;
+
+        ## Optional message contents.  Note that this is an object, and can be any
+        ## type as appropriate.
+        Object content;
+    }
+
+    oper init() {}
+
+    @static Message fromJSON(JSONObj obj) {
+        result := Message();
+        result.to = obj.maybeGetString('to');
+        result.from = obj.maybeGetString('from');
+        result.id = obj.maybeGetString('id');
+        result.ref = obj.maybeGetString('ref');
+        result.type = obj.maybeGetString('type');
+        result.content = obj.maybeGetString('content');
+
+        return result;
+    }
+
+    void formatTo(Formatter out) {
+        out `to: $(to.getRepr())\n`;
+        if (from)
+            out `from: $(from.getRepr())\n`;
+        if (id)
+            out `id: $(id.getRepr())\n`;
+        if (ref)
+            out `ref: $(ref.getRepr())\n`;
+        if (type)
+            out `type: $(type.getRepr())\n`;
+        if (content)
+            out `content: $content\n`;
+    }
+
+    void jsonFormat(Formatter out) {
+        out `{"to": `;
+        formatJSON(out, to);
+        if (from) {
+            out `,"from": `;
+            formatJSON(out, from);
+        }
+        if (id) {
+            out `,"id": `;
+            formatJSON(out, id);
+        }
+        if (ref) {
+            out `,"ref": `;
+            formatJSON(out, ref);
+        }
+        if (type) {
+            out `,"type": `;
+            formatJSON(out, type);
+        }
+        if (content) {
+            out `,"content": `;
+            formatJSON(out, content);
+        }
+        out `}`;
+    }
+
+    int cmp(Message other) {
+        rc := cmp(to, other.to); if (rc) return rc;
+        rc = cmp(from, other.from); if (rc) return rc;
+        rc = cmp(id, other.id); if (rc) return rc;
+        rc = cmp(ref, other.ref); if (rc) return rc;
+        rc = cmp(type, other.type); if (rc) return rc;
+        rc = cmp(from, other.from); if (rc) return rc;
+        rc = cmp(content, other.content);
+        return rc;
+    }
+
+    int cmp(Object other) {
+        if (o := Message.cast(other))
+            return cmp(o);
+        else
+            return Object.cmp(other);
+    }
+}
+
+class TextHolder {
+    @cvars {
+        ## Required text content.
+        String text;
+    }
+
+    oper init() {}
+
+    @static TextHolder fromJSON(JSONObj obj) {
+        result := TextHolder();
+        result.text = obj.getString('text');
+
+        return result;
+    }
+
+    JSONObj toJSON() {
+        result := JSONObj.create();
+        result['text'] = text;
+
+        return result;
+    }
+
+    void formatTo(Formatter out) {
+        out `text: $(text.getRepr())\n`;
+    }
+
+    int cmp(TextHolder other) {
+        return cmp(text, other.text);
+    }
+
+    int cmp(Object other) {
+        if (o := TextHolder.cast(other))
+            return cmp(o);
+        else
+            return Object.cmp(other);
+    }
+}
+
+@interface Iter[T] {
+    @abstract void next();
+    #@abstract bool isTrue();
+    @abstract T elem();
+
+    Iter iter() { return this }
+}
+
+## A user is anything with an address that can send and receive messages.
+@interface User {
+
+    ## Iterator over the messages to be sent to the user.
+    @abstract
+    Iter[Message] oper .outboundMessages();
+
+    ## Add a message to the outbound queue for the user.
+    @abstract void addMessage(Message message);
+
+    ## Process an ack message.
+    @abstract void processAck(Message message);
+
+    ## Returns the primary address of the user.
+    @abstract String oper .address();
+
+    ## This should be called when an agent for the user is communicated to.
+    @abstract void accessed();
+
+    ## Run a GC cycle on the user, returns true if the user should be removed.
+    @abstract bool runGCCycle(Time now);
+}
+
+## Defines the privileges of a communication endpoint.
+##
+## Agents indicate which users an endpoint is allowed to relay and receive
+## messages on behalf of.
+@interface Agent {
+
+    ## Returns an iterator over the set of users that the agent is allowed to
+    ## send on behalf of.
+    @abstract Iter[User] senders();
+
+    ## Returns an iterator over the set of users that the agent is allowed
+    ## to receive messages for.
+    @abstract Iter[User] receivers();
+
+    ## Returns an iterator over the set of outbound messages for the agent.
+    @abstract Iter[Message] oper .outboundMessages();
+
+    ## The default user for mesaages without a "from" field.
+    @abstract User oper .defaultUser();
+
+    ## This should be called when the agent is communicated to.
+    @abstract void accessed();
+
+    ## Run a GC cycle on the agent, returns true if the agent should be removed.
+    @abstract bool runGCCycle(Time now);
+}
+
+@interface ServerState {
+
+    ## Returns the server name to be used in "from" fields for server error
+    ## messages.
+    @abstract String oper .name();
+
+    ## Returns a new message id unique to the server.
+    @abstract String getUUID();
+
+    ## Returns the agent for the specified cookie.
+    @abstract Agent getAgent(String cookie);
+
+    ## Adds a new agent, assigns it a random cookie.
+    ##
+    ## Returns the new cookie.
+    @abstract String addAgent(Agent agent);
+
+    ## Returns a new anonymous agent.  Anonymous agents are used for
+    ## unverified connections.
+    @abstract Agent getAnonAgent();
+
+    ## Returns a User object for the address.
+    ##
+    ## Returns null if the user is not dispatchable.
+    @abstract User getUser(String addr);
+
+    ## Return the user object that owns the outbound message.
+    ##
+    ## Removes the message id from our tracking.
+    @abstract User popUserForMessage(String message_id);
+
+    ## Registers a user as the owner of a given message.
+    ##
+    ## The user should have the message in their outbound queue.
+    @abstract void registerUserForMessage(String message_id, User user);
+}
+
+## Wraps an ordinary iter (e.g. an Array iterator) in an abstract iterator.
+class IterWrap[I, E] @impl Iter[E] {
+    @cvars {
+        I __rep;
+    }
+
+    void next() { __rep.next() }
+    bool isTrue() { return __rep.isTrue() }
+    E elem() { return __rep.elem() }
+}
+
+## Iterator over an empty set.  See the NULL_*_ITER constants, we only need
+## one of each type of these.
+class NullIter[E] @impl Iter[E] {
+    void next() {}
+    bool isTrue() { return false }
+    E elem() { return null }
+}
+
+const NULL_MESSAGE_ITER := NullIter[Message]();
+
+class AnonUser @impl User {
+    Array[Message] __outbound = {};
+    String __address;
+    Time __lastAccess = Time.now();
+
+    oper init(String defaultUserAddress) : __address = defaultUserAddress {}
+
+    void addMessage(Message message) { __outbound.append(message) }
+    String oper .address() { return __address }
+    Iter[Message] oper .outboundMessages() {
+        return IterWrap[Array[Message].ArrayIter, Message](__outbound.iter());
+    }
+
+    void processAck(Message message) {
+        # Just remove the message from the outbound queue.
+        for (i :on __outbound) {
+            if (i.elem().id == message.ref) {
+                __outbound.delete(i.index);
+                break;
+            }
+        }
+    }
+
+    void accessed() {
+        __lastAccess.setToNow(null);
+    }
+
+    bool runGCCycle(Time now) {
+        if (now.secs - __lastAccess.secs > _ANON_USER_EXPIRY) {
+            __outbound.clear();
+            return true;
+        } else {
+            return false;
+        }
+    }
+}
+
+## Agent for a connection that has not been authorized.
+class AnonAgent @impl Agent {
+
+    AnonUser __user;
+    Time __lastAccess = Time.now();
+
+    oper init(String defaultUserAddress) : __user(defaultUserAddress) {}
+
+    Iter[User] senders() {
+        return IterWrap[Array[User].ArrayIter, User](
+            Array[User]![defaultUser].iter()
+        );
+    }
+
+    Iter[User] receivers() {
+        return senders();
+    }
+
+    ## Returns an iterator over the set of outbound messages for the agent.
+    Iter[Message] oper .outboundMessages() {
+        return __user.outboundMessages;
+    }
+
+    ## The default user for mesaages without a "from" field.
+    @abstract User oper .defaultUser() {
+        return __user;
+    }
+
+    void accessed() {
+        __lastAccess.setToNow(null);
+        __user.accessed();
+    }
+
+    bool runGCCycle(Time now) {
+        return now.secs - __lastAccess.secs > _ANON_USER_EXPIRY;
+    }
+}
+
+## A group account, dispatches messages to all of the members of the group.
+class Group @impl User {
+
+    HashMap[String, User] __members = {};
+    String __address;
+    ServerState __serverState;
+
+    oper init(String address, ServerState serverState) :
+        __address = address,
+        __serverState = serverState {
+    }
+
+    ## Add a new member to the group.
+    void addMember(String addr, User member) {
+        __members[addr] = member;
+    }
+
+    Iter[Message] oper .outboundMessages() {
+        return NULL_MESSAGE_ITER;
+    }
+
+    void addMessage(Message message) {
+        # Add the message to the outbound queue of all members except the one
+        # who sent it.
+        for (entry :in __members) {
+            if (entry.key != message.from) {
+                msgId := __serverState.getUUID();
+                m := Message(entry.key, __address, msgId, null, 'message',
+                             message
+                             );
+                __serverState.registerUserForMessage(msgId, entry.val);
+                entry.val.addMessage(m);
+            }
+        }
+    }
+
+    void processAck(Message message) {
+        # TODO: Figure out whether we need do do anything with these.
+        warn `ack received by group $__address: $message`;
+    }
+
+    String oper .address() { return __address }
+
+    void accessed() {}
+
+    bool runGCCycle(Time now) {
+        # As it stands, groups are never gc-d.
+        return false;
+    }
+}
+
+class MessageEngine {
+
+    ServerState __serverState;
+
+    oper init(ServerState serverState) : __serverState = serverState {}
+
+    Message createAck(Message msg, Object content) {
+        result := Message(msg.from, 'node', null, null, 'ack', null);
+
+        # Add the content if we got it.
+        if (content) {
+            # Promote a string to a structure.
+            if (stringContent := String.cast(content))
+                result.content = TextHolder(stringContent);
+            else
+                result.content = content;
+        }
+
+        # Set the id field if there was one.
+        msg_id := msg.id;
+        if (msg_id)
+            result.ref = msg_id;
+        return result
+    }
+
+    ## Process a single message, return an ack if appropriate, null if not.
+    Message processMsg(Agent sourceAgent, Message message) {
+        recip := message.to;
+        if (recip is null)
+            recip = 'node';
+        if (!message.from)
+            message.from = sourceAgent.defaultUser.address;
+        # TODO: Verify that the agent is authorized to send on behalf of
+        # the address.
+
+        # Check for an ack.
+        if (message.type == 'ack') {
+            user := __serverState.popUserForMessage(message.ref);
+            user.processAck(message);
+            return null;
+        } else {
+            # Make sure we've got a message id.
+            if (message.id is null)
+                message.id = __serverState.getUUID();
+            userx := __serverState.getUser(recip);
+            if (!userx)
+                return createAck(message,
+                                 FStr() `Can not dispatch to $recip`
+                                 );
+            userx.addMessage(message);
+            __serverState.registerUserForMessage(message.id, userx);
+            return createAck(message, null);
+        }
+    }
+}
+
+class ServerStateImpl @impl ServerState {
+
+    ## Serial number potion of the last UUID sent by the server.
+    int __lastId;
+
+    ## Maps cookies to their associated agents.
+    HashMap[String, Agent] __agents = {};
+
+    ## A default group, the "lobby", that new users are automatically a part
+    ## of.  This may go away or at least move elsewhere.  Also the address of
+    ## "lobby" is completely bogus.
+    Group __lobby;
+
+    ## Local users indexed by name.
+    HashMap[String, User] __users = {};
+
+    ## Mapping from a message Id to the user who sent it.  This is used to
+    ## lookup the user to which an ack should be returned.
+    HashMap[String, User] __userForMessage = {};
+
+    ## The server name.  This can generally be the hostname.
+    String __name;
+
+    oper init(String name) : __name = name {
+        __lobby = Group('lobby', this);
+        __users['lobby'] = __lobby;
+    }
+
+    String oper .name() { return __name }
+
+    String getUUID() {
+        ++__lastId;
+        now := Time.now();
+        return FStr() `$(now.secs)-$(now.nsecs)-$__lastId`;
+    }
+
+    Agent getAgent(String cookie) { return __agents.get(cookie) }
+
+    String addAgent(Agent agent) {
+        cookie := altEncode(makePath('/dev/urandom').reader().read(16));
+        __agents[cookie] = agent;
+        return cookie;
+    }
+
+    Agent getAnonAgent() {
+        ++__lastId;
+        id := FStr() `anon$__lastId`;
+        agent := AnonAgent(id);
+
+        # Add the user to the lobby and the user set.
+        __lobby.addMember(id, agent.defaultUser);
+        __users[id] = agent.defaultUser;
+        return agent;
+    }
+
+    User getUser(String addr) {
+        # At this time, we can only dispatch to local users.
+        return __users.get(addr);
+    }
+
+    User popUserForMessage(String messageId) {
+        user := __userForMessage[messageId];
+        __userForMessage.delete(messageId);
+        return user;
+    }
+
+    void registerUserForMessage(String messageId, User user) {
+        @assert(!__userForMessage.hasKey(messageId))
+        __userForMessage[messageId] = user;
+    }
+
+    void runGCCycle() {
+        # Remove all expired agents.
+        toRemove := Array[String]();
+        now := Time.now();
+
+        @define clean(var) {
+            for (item :in var) {
+                if (item.val.runGCCycle(now))
+                    toRemove.append(item.key);
+            }
+            for (key :in toRemove)
+                var.delete(key);
+            toRemove.clear();
+        }
+
+        @clean(__agents);
+        @clean(__users);
+        @clean(__userForMessage);
+    }
+}
+

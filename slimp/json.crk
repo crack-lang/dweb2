@@ -1,0 +1,94 @@
+
+import crack.cont.array Array;
+import crack.enc.json2 JSONObjectMap;
+import crack.io Formatter, FStr, StringFormatter;
+import crack.lang Box, Exception, ManagedBuffer;
+
+@import crack.ann define, interface;
+
+alias JSONArray = Array[Object];
+alias JSONInt = Box[int];
+alias JSONBool = Box[bool];
+
+@export_symbols JSONArray;
+
+@interface JSONFormatable {
+    @abstract void jsonFormat(Formatter out);
+}
+
+void formatJSON(Formatter out, Object o) {
+    @define cast(cls) { !( (obj := cls.cast(o, null)) is null ) }
+    if (@cast(JSONObjectMap)) {
+        out `{`;
+        bool first = true;
+        for (item :in obj) {
+            if (first)
+                first = false;
+            else
+                out `, `;
+            out `"$(item.key)": `;
+            formatJSON(out, item.val);
+        }
+        out `}`;
+    } else if (@cast(JSONInt)) {
+        out `$(obj.val)`;
+    } else if (@cast(String)) {
+        out `"`;
+        ManagedBuffer buf = {1};
+        buf.size = 1;
+        for (int i = 0; i < obj.size; ++i) {
+            ch := obj[i];
+            if (ch == b'\b')
+                out `\\b`;
+            else if (ch == 12)
+                out `\\f`;
+            else if (ch == b'\n')
+                out `\\n`;
+            else if (ch == b'\r')
+                out `\\r`;
+            else if (ch == b'\t')
+                out `\\t`;
+            else if (ch == b'"')
+                out `\\"`;
+            else if (ch == b'\\')
+                out `\\\\`;
+            else if (ch < 32 || ch > 127)
+                throw Exception(
+                    FStr() `Invalid byte character $ch at position $i`
+                );
+            else {
+                buf.buffer[0] = ch;
+                out `$buf`;
+            }
+        }
+        out `"`;
+    } else if (@cast(JSONFormatable)) {
+        obj.jsonFormat(out);
+    } else if (@cast(JSONBool)) {
+        out `$obj`;
+    } else if (@cast(JSONArray)) {
+        out `[`;
+        first := true;
+        for (elem :in obj) {
+            if (first)
+                first = false;
+            else
+                out `,`;
+            formatJSON(out, elem);
+        }
+        out `]`;
+    } else if (o is null) {
+        out `null`;
+    } else {
+        throw Exception(
+            FStr() `Can't format item $o (type $(o.class.name))`
+        );
+    }
+}
+
+String formatJSONToString(Object obj) {
+    out := StringFormatter();
+    formatJSON(out, obj);
+    return out.string();
+}
+

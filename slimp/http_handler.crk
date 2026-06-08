@@ -1,0 +1,106 @@
+
+import crack.cont.array Array;
+import crack.enc.json2 parse, JSONObjectMap;
+import crack.http.core Request, RequestHandler;
+import crack.http.util PostDataCollector;
+import crack.io cerr, BufferReader, FStr, StringFormatter;
+import crack.lang Exception;
+import crack.logger debug, error, info;
+import .json formatJSON, formatJSONToString, JSONArray;
+import .model Agent, JSONObj, Message, MessageEngine, ServerState;
+
+@import crack.ann cvars, impl;
+
+class SLIMPEndpoint @impl RequestHandler {
+
+    @cvars {
+        MessageEngine __engine;
+        ServerState __state;
+    }
+
+    class _PostHandler @impl RequestHandler {
+        @cvars {
+            MessageEngine engine;
+            Agent agent;
+        }
+
+        bool oper call(Request req) {
+            info `slimp post: $(req.contents.getRepr())\n`;
+            Object parcel;
+            try {
+                parcel = parse(BufferReader(req.contents));
+            } catch (Exception ex) {
+                error `parsing posted message:\n$ex\n`;
+                req.sendReply(400, 'text/plain', ex.text);
+                return true;
+            }
+
+            if (messages := Array[Object].cast(parcel, null)) {
+                result := JSONArray();
+                for (msg :in messages) {
+                    m := JSONObjectMap.cast(msg, null);
+                    if (m is null) {
+                        req.sendReply(422, 'text/plain',
+                                      'Message list contains a non-object'
+                                      );
+                        return true;
+                    }
+
+                    try {
+                        ack := engine.processMsg(agent,
+                                                 Message.fromJSON(JSONObj(m))
+                                                 );
+                        if (ack)
+                            result.append(ack);
+                    } catch (Exception ex) {
+                        error `error processing message:\n$ex\n`;
+                        req.sendReply(422, 'text/plain', ex.text);
+                        return true;
+                    }
+                    data := formatJSONToString(result);
+                    debug `sending slimp post response $(data.getRepr())\n`;
+                    req.sendReply(200, 'application/json', data);
+                }
+            } else {
+                req.sendReply(422, 'text/plain', 'Message list expected.');
+            }
+            return true;
+        }
+    }
+
+    bool oper call(Request req) {
+        debug `in slimp handler, method is $(req.method)`;
+        # Get the agent or assign a new anonymous one.
+        cookie := req.getCookie('SlimpToken');
+        Agent agent;
+        if (cookie) {
+            token := cookie.value;
+            agent = __state.getAgent(token);
+        }
+
+        if (!agent) {
+            # Either we didn't get a cookie or we couldn't find the agent.
+            agent = __state.getAnonAgent();
+            req.addHeader('Set-Cookie',
+                          'SlimpToken=' + __state.addAgent(agent)
+                          );
+        } else {
+            agent.accessed();
+        }
+
+        if (req.method == 'GET') {
+            info `slimp get method`;
+            result := JSONArray();
+            for (msg :in agent.outboundMessages)
+                result.append(msg);
+            data := formatJSONToString(result);
+            debug `sending $(data.getRepr())`;
+            req.sendReply(200, 'application/json', data);
+        } else if (req.method == 'POST') {
+            debug `slimp post method`;
+            req.postDataHandler =
+                PostDataCollector(_PostHandler(__engine, agent));
+        }
+        return true;
+    }
+}

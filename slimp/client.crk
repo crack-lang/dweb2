@@ -1,0 +1,86 @@
+
+import crack.functor Functor1;
+import crack.io cout, cerr, FStr, StringFormatter;
+import crack.logger.ctx Log;
+import crack.net resolve, InetAddress;
+import crack.net.comm2 Comm;
+import dweb2.httpclient _HTTPClient = HTTPClient, HTTPHandler, Request, Response;
+import .json formatJSON, JSONArray;
+import .model Message, TextHolder;
+
+@import crack.ann impl, interface, nullable, SCOPE_NAME;
+
+alias MessageCallback = Functor1[void, Message];
+
+@export_symbols MessageCallback;
+
+@interface Client {
+    @abstract Response sendSync(Message message);
+}
+
+class HTTPClient @impl Client {
+    _HTTPClient __rep;
+    String __path;
+    @nullable String token;
+
+    # Functor to be called when a message is received.
+    @nullable MessageCallback handler;
+
+    oper init(Comm comm, InetAddress addr, String endpointPath,
+              @nullable String token,
+              @nullable MessageCallback handler) :
+        __rep(comm.getSyncProxy(addr, HTTPHandler())),
+        __path = endpointPath {
+    }
+
+    Response sendSync(Message message) {
+        req := Request('POST', __path);
+        if (token)
+            req.headers.append(Header('SlimpToken', token));
+        out := StringFormatter();
+        formatJSON(out, JSONArray![message]);
+        cerr `message = $(out.string())\n`;
+        req.body = out.string();
+        req.finish();
+        cout `<<<\n$req\n<<<\n`;
+        response := __rep.send(req);
+        if (response.status == 200) {
+            if (tokenHeader := response.getHeader('slimptoken'))
+                token = tokenHeader;
+
+            messages := Array[Object].cast(parse(BufferReader(response.body)));
+            bool acked;
+            for (msg :in messages) {
+                msg := Message.fromJSON(JSONObj(JSONObjectMap.cast(m)));
+                if (msg.type == 'ack' && msg.id == message.id) {
+                    if (!msg.contents) {
+                        acked = true;
+                    } else {
+                        error := JSONObjectMap.cast(msg.contents);
+                        throw AckError(String.cast(error.get('status'), 'nack'),
+                                       int(Box[float64].cast(error['code'])),
+                                       String.cast(error['text']),
+                                       );
+                    }
+                # Non-ack message, do a callback.
+                } else if (handler) {
+                    handler(msg);
+                }
+            }
+        }
+
+    }
+}
+
+if (@SCOPE_NAME == '.main') {
+    comm := Comm(Log(cerr, cerr, cerr, cerr, cerr, 'client'));
+    comm.start();
+    addr := InetAddress(InetAddress.cast(resolve('localhost')[0]), 9193);
+    client := HTTPClient(comm, addr, '/slimp/api');
+    msg := Message();
+    msg.to = 'lobby';
+    msg.type = 'text';
+    msg.content = 'this is message content';
+    cout `$(client.sendSync(msg))\n`;
+}
+
