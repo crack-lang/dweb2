@@ -1,12 +1,16 @@
 
+import crack.cont.array Array;
+import crack.enc.json2 parse, JSONObjectMap;
 import crack.functor Functor1;
-import crack.io cout, cerr, FStr, StringFormatter;
+import crack.io cout, cerr, BufferReader, FStr, StringFormatter;
+import crack.lang Box, Exception;
 import crack.logger.ctx Log;
 import crack.net resolve, InetAddress;
 import crack.net.comm2 Comm;
-import dweb2.httpclient _HTTPClient = HTTPClient, HTTPHandler, Request, Response;
+import dweb2.httpclient _HTTPClient = HTTPClient, Header, HTTPHandler,
+    Request, Response;
 import .json formatJSON, JSONArray;
-import .model Message, TextHolder;
+import .model JSONObj, Message, TextHolder;
 
 @import crack.ann impl, interface, nullable, SCOPE_NAME;
 
@@ -16,6 +20,18 @@ alias MessageCallback = Functor1[void, Message];
 
 @interface Client {
     @abstract Response sendSync(Message message);
+}
+
+class AckError : Exception {
+    String status;
+    int code;
+    String text;
+
+    oper init(String status, int code, String text) :
+        status = status,
+        code = code,
+        Exception(text) {
+    }
 }
 
 class HTTPClient @impl Client {
@@ -50,15 +66,15 @@ class HTTPClient @impl Client {
 
             messages := Array[Object].cast(parse(BufferReader(response.body)));
             bool acked;
-            for (msg :in messages) {
+            for (m :in messages) {
                 msg := Message.fromJSON(JSONObj(JSONObjectMap.cast(m)));
                 if (msg.type == 'ack' && msg.id == message.id) {
-                    if (!msg.contents) {
+                    if (!msg.content) {
                         acked = true;
                     } else {
-                        error := JSONObjectMap.cast(msg.contents);
+                        error := JSONObjectMap.cast(msg.content);
                         throw AckError(String.cast(error.get('status'), 'nack'),
-                                       int(Box[float64].cast(error['code'])),
+                                       int(Box[float64].cast(error['code']).val),
                                        String.cast(error['text']),
                                        );
                     }
@@ -69,18 +85,21 @@ class HTTPClient @impl Client {
             }
         }
 
+        return response;
     }
 }
 
 if (@SCOPE_NAME == '.main') {
     comm := Comm(Log(cerr, cerr, cerr, cerr, cerr, 'client'));
     comm.start();
-    addr := InetAddress(InetAddress.cast(resolve('localhost')[0]), 9193);
-    client := HTTPClient(comm, addr, '/slimp/api');
+    addr := InetAddress(InetAddress.cast(resolve('localhost')[0]), 9192);
+    client := HTTPClient(comm, addr, '/slimp/api', null, null);
     msg := Message();
     msg.to = 'lobby';
     msg.type = 'text';
     msg.content = 'this is message content';
-    cout `$(client.sendSync(msg))\n`;
+    for (int i; i < 100; ++i)
+        cout `$(client.sendSync(msg))\n`;
+    comm.stop();
 }
 
