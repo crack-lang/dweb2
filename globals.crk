@@ -1,6 +1,7 @@
+import crack.eventmgr EventManager;
 import crack.net Poller;
 import crash.crash createRootContext;
 
 poller := Poller();
 crashCtx := createRootContext();
-
+eventManager := EventManager(poller);

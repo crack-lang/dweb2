@@ -21,7 +21,7 @@ import toybox.httpd_funcs httpdInit, wrapPathDispatcher;
 import .blog makeBlog, Blog;
 import .data Bookmark, Data;
 import .dwiki WikiRoot;
-import .globals crashCtx, poller;
+import .globals crashCtx, eventManager, poller;
 import .html prefix, u, HTMLFormatter, Raw, RequestHelper;
 import .httpd addServer;
 import .login DWebLoginHandler;
@@ -305,5 +305,4 @@ addServer(poller, InetAddress(INADDR_ANY, port),
           HandlerArray![HandlerFunc(log), disp, NOT_FOUND]);
 
 cout `Serving.\n`;
-while (true)
-    poller.waitAndProcess(null);
+eventManager.run();
