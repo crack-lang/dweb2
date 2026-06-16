@@ -1,0 +1,401 @@
+## Scripting system for dweb2.
+##
+## Allows the server to be configured and controlled using Crash scripts.
+
+import authdb AuthDBImpl;
+import crack.strutil StringArray;
+import crack.cont.array Array; # for @function
+import crack.fs makePath, Path;
+import crack.hash.sha256 SHA256;
+import crack.http.auth AuthHandler, AuthInfo, LoginHandler, StupidRNG, User;
+import crack.http.core Request, RequestHandler;
+import crack.http.util parseQuery, Chain, MethodDispatcher, PathDispatcher,
+    QueryParmMap, NOT_FOUND;
+import crack.http.server Server;
+import crack.io FStr, StringFormatter, StringWriter;
+import crack.net InetAddress;
+import crack.lang AppendBuffer, Exception;
+import crack.nml.parse DocParser;
+import crack.nml.html HTMLFormatter;
+import crack.threads Thread;
+# for @function (-Value)
+import crash.crash eval, Builtin, EvalContext, Obj, ObjOf, ParmInfo, Value;
+import crash.types BoolObj, IntObj, FloatObj; # for @function
+
+import kvjournal.kvdb DBIFace;
+
+@import crack.ann impl;
+@import crash.ann function; # for @function
+
+## HTML Escaper that belongs in the crack library.
+String h(String val) {
+    if (val is null)
+        return null;
+    AppendBuffer result = {val.count()};
+    for (int i = 0; i < val.count(); ++i) {
+        ch := val[i];
+        if (ch == b'&')
+            result.extend('&amp;');
+        else if (ch == b'<')
+            result.extend('&lt;');
+        else if (ch == b'>')
+            result.extend('&gt;');
+        else
+            result.append(ch)
+    }
+
+    return String(result, true);
+}
+# Configuration options.
+
+## TCP Port to bind to.
+int port = 8080;
+
+## If true, causes the server to bind to all interfaces.  Otherwise, just bind
+## to localhost.
+bool bindAll;
+
+## Top-level handler chain.
+rootChain := Chain();
+
+@function int setPort(int newPort) {
+    port = newPort;
+    return 0;
+}
+
+@function int bindAllInterfaces(bool val) {
+    bindAll = val;
+    return 0;
+}
+
+## Handler to match the first segment of a path.  This is like PathDispatcher
+## for a single path.
+class SegmentMatcher @impl RequestHandler {
+    String __segment;
+    RequestHandler __rep;
+
+    oper init(String segment, RequestHandler rep) :
+        __segment = segment,
+        __rep = rep {
+    }
+
+    bool oper call(Request req) {
+        if (req.getParsedPath()[0] == __segment)
+            return __rep(req);
+        else
+            return false;
+    }
+}
+
+## Add a handler for all paths starting with 'segment', which should be a
+## string containing no slashes.
+@function int sub_handler(String segment, RequestHandler handler) {
+    rootChain.append(SegmentMatcher(segment, handler));
+    return 0;
+}
+
+## Add an arbitrary request handler to the root chain.
+@function int handler(RequestHandler handler) {
+    rootChain.append(handler);
+    return 0;
+}
+
+## This handler lets you define static content right in your configuration
+## file.
+class StaticHandler @impl RequestHandler {
+    String __contentType, __content;
+
+    oper init(String contentType, String content) :
+        __contentType = contentType,
+        __content = content {
+    }
+
+    bool oper call(Request req) {
+        req.sendReply(200, __contentType, __content);
+        return true;
+    }
+}
+
+class Redirect @impl RequestHandler {
+    String __url;
+
+    oper init(String url) : __url = url {}
+
+    bool oper call(Request req) {
+        req.sendRedirect(302, __url);
+        return true;
+    }
+}
+
+## Serves files from a filesystem tree.
+class TreeDispatcher @impl RequestHandler {
+    Path root;
+
+    oper init(Path root) : root = root {}
+
+    ## Normalize a path (fix '..' and '.').
+    @static StringArray __normalize(StringArray path) {
+        StringArray result = {};
+        for (segment :in path) {
+            if (segment == '..') {
+                if (result)
+                    result.delete(-1);
+            } else if (segment != '.') {
+                result.append(segment);
+            }
+        }
+        return result;
+    }
+
+    bool oper call(Request req) {
+        path := root/__normalize(req.getParsedPath()).join('/');
+        import crack.io cerr;
+        cerr `path = $(path.getFullName())\n`;
+        if (path.exists()) {
+
+            if (path.isDir()) {
+                if ((p := path/'index.html').exists()) {
+                    path = p;
+                } else if ((p := path/'index.nml').exists()) {
+                    path = p;
+                } else {
+                    StringFormatter temp = {};
+                    temp `<html><body>\n`;
+                    for (child :in path.children())
+                        temp I`<a href="$(req.path)/$(child.getName())">
+                                 $(child.getName())
+                               </a>
+                               `;
+                    temp `</body></html>`;
+                    req.sendReply(200, 'text/html', temp.string());
+                    return true;
+                }
+            }
+
+            # Check for an NML doc.
+            if (path.getName().endsWith('.nml')) {
+                parser := DocParser(path.makeFullReader(), req.path);
+                doc := parser.parseDoc();
+                out := StringWriter();
+                formatter := HTMLFormatter(out);
+                formatter.formatAll(doc);
+                req.sendReply(200, 'text/html', out.string());
+                return true;
+            }
+
+            contents := path.readAll();
+            String contentType;
+            if (path.getName().endsWith('.html'))
+                contentType = 'text/html';
+            else
+                contentType = 'text/plain';
+            req.sendReply(200, contentType, contents);
+            return true;
+        }
+        return false;
+    }
+}
+
+## Create a handler that renders a static tree rooted at a particular location
+## in the filesystem.
+@function TreeDispatcher makeStaticTree(String root) {
+    return TreeDispatcher(makePath(root));
+}
+
+@function StaticHandler makeStaticHandler(String contentType, String content) {
+    return StaticHandler(contentType, content);
+}
+
+@function Redirect makeRedirect(String url) {
+    return Redirect(url);
+}
+
+alias PathDispatcherObj = ObjOf[PathDispatcher];
+
+PathDispatcherObj wrapPathDispatcher(PathDispatcher inst) {
+    @function(PathDispatcher) int set(String key, RequestHandler handler) {
+        self[key] = handler;
+        return 0;
+    }
+
+    @function(PathDispatcher) PathDispatcher self() {
+        return self;
+    }
+
+    result := PathDispatcherObj(inst);
+    result.define('set', set(inst));
+    result.define('self', self(inst));
+    return result;
+}
+
+@function PathDispatcherObj makePathDispatcher() {
+    return wrapPathDispatcher(PathDispatcher());
+}
+
+class CrashEvaluatorHandler : MethodDispatcher {
+    EvalContext __ctx;
+
+    oper init(EvalContext ctx) : __ctx = ctx {}
+
+    bool onGet(Request req) {
+        req.sendReply(
+            200, 'text/html',
+            FStr() I`\
+              <html>
+                <body>
+                  <form method="post" action="$(h(req.path))">
+                    <textarea rows="40" cols="80" name="c"></textarea><br>
+                    <input type="submit">
+                  </form>
+                </body>
+              </html>`
+        );
+        return true;
+    }
+
+    void onPost(Request req) {
+        query := QueryParmMap.get(req);
+        if (query is null) {
+            query = parseQuery(req.contents);
+            query.putIn(req);
+        }
+        code := query.getSingle('c');
+        if (!code) {
+            req.sendReply(499, 'text/plain', 'Missing "c" param.');
+            return;
+        }
+
+        try {
+            result := eval(code, __ctx);
+            req.sendReply(200, 'text/plain', FStr() `$result\n`);
+        } catch (Exception ex) {
+            req.sendReply(200, 'text/plain', FStr() `$ex\n`);
+        }
+    }
+}
+
+## Creates a "crash evaluator" endpoint, which evaluates crash code in the "c"
+## parameter.
+##
+## Yes, this is very dangerous.
+##
+## It's also not thread-safe.  Don't use this in HTTP servers started from
+## startHTTPServer.
+@function(EvalContext) CrashEvaluatorHandler makeCrashEvaluatorHandler() {
+    return CrashEvaluatorHandler(self);
+}
+
+class ChainMethods {
+    @function(Chain) int handler(RequestHandler h) {
+        self.append(h);
+        return 0;
+    }
+
+    @function(Chain) Chain rep() {
+        return self;
+    }
+}
+
+alias ChainObj = ObjOf[Chain];
+
+@function ChainObj makeChain() {
+    chain := Chain();
+    obj := ChainObj(chain);
+    obj.define('handler', ChainMethods.handler(chain));
+    obj.define('rep', ChainMethods.rep(chain));
+    return obj;
+}
+
+## Creates the auth info object.
+## 'randomSeed' can be a string of any length, it is used as part of the
+## source of entropy for random number generation.
+@function AuthDBImpl makeAuthDBImpl(String randomSeed, DBIFace users,
+                                    DBIFace cookies
+                                    ) {
+    # Do a SHA256 hash on the random seed, we're going to use the first 8
+    # bytes of this as stupid RNG salt and the remaining 4 to 8 bytes
+    # (depending on sizeof uint) as the seed.
+    SHA256 hasher = {};
+    hasher.update(randomSeed);
+    digest := hasher.digest();
+
+    return AuthDBImpl(StupidRNG(array[uint64](digest.buffer)[0],
+                                array[uint](digest.buffer + 8)[0]
+                                ),
+                      users,
+                      cookies
+                      );
+}
+
+alias AuthDBImplObj = ObjOf[AuthDBImpl];
+
+Value wrapAuthDBImpl(EvalContext context, Object authInfo) {
+    authDb := AuthDBImpl.cast(authInfo);
+    obj := AuthDBImplObj(authDb);
+    @function(AuthDBImpl) User addUser(String name, String password, String salt) {
+        return self.addUser(name, password, salt);
+    }
+    obj.define('addUser', addUser(authDb));
+    @function(AuthDBImpl) int setLoginUrlPathPrefix(String prefix) {
+        self.setLoginUrlPathPrefix(prefix);
+        return 0;
+    }
+    obj.define('setLoginUrlPathPrefix', setLoginUrlPathPrefix(authDb));
+    return obj;
+}
+
+## Creates an auth handler.
+@function AuthHandler makeAuthHandler(AuthDBImpl authInfo) {
+    return AuthHandler(authInfo);
+}
+
+## Creates a login form handler.  You can usually just attach this to /login
+## and be done with it.
+@function LoginHandler makeLoginHandler(AuthInfo authInfo) {
+    return LoginHandler(authInfo);
+}
+
+void runHTTPServer() {
+    server := Server(bindAll ? InetAddress(0, port) :
+                               InetAddress(127, 0, 0, 1, port)
+                     );
+    server.addHandler(rootChain);
+    server.addHandler(NOT_FOUND);
+    server.run();
+}
+
+@function int runHTTPServer_() {
+    runHTTPServer();
+    return 0;
+}
+
+## Runs the server in a background thread.
+class ServerThread : Thread {
+    void run() {
+        runHTTPServer();
+    }
+}
+
+@function int startHTTPServer() {
+    ServerThread().start();
+    return 0;
+}
+
+void httpdInit(EvalContext ctx) {
+    ctx.define('port', setPort());
+    ctx.define('bindAll', bindAllInterfaces());
+    ctx.define('sub_handler', sub_handler());
+    ctx.define('handler', handler());
+    ctx.define('StaticHandler', makeStaticHandler());
+    ctx.define('Redirect', makeRedirect());
+    ctx.define('StaticTree', makeStaticTree());
+    ctx.define('runHTTPServer', runHTTPServer_());
+    ctx.define('startHTTPServer', startHTTPServer());
+    ctx.define('PathDispatcher', makePathDispatcher());
+    ctx.define('CrashEvaluatorHandler', makeCrashEvaluatorHandler(ctx));
+    ctx.define('Chain', makeChain());
+    ctx.define('AuthDBImpl', makeAuthDBImpl());
+    ctx.define('AuthHandler', makeAuthHandler());
+    ctx.define('LoginHandler', makeLoginHandler());
+    ctx.defineConverter(AuthDBImpl, wrapAuthDBImpl);
+}

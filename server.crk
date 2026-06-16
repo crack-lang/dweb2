@@ -16,7 +16,7 @@ import crack.sys argv;
 import crash.crash eval, Builtin, EvalContext, ParmInfo, SimpleValue;
 import crash.types IntObj;
 import kvjournal.db BFile;
-import toybox.httpd_funcs httpdInit, wrapPathDispatcher;
+import httpd_funcs httpdInit, wrapPathDispatcher;
 
 import .blog makeBlog, Blog;
 import .data Bookmark, Data;
