@@ -96,8 +96,18 @@ class StringStandardPage @impl RequestHandler {
     return StringStandardPage(title, contents, scripts);
 }
 
+# Initialize the datastore.
+data := Data();
+data.init();
+
 crashCtx.define('FileStandardPage', makeFileStandardPage());
 crashCtx.define('StringStandardPage', makeStringStandardPage());
+
+# Use this for cases where we can use User data if the user is logged in but
+# don't require a logged in user.
+softAuthHandler := SoftAuthHandler(data.auth);
+
+crashCtx.define('softAuthHandler', SimpleValue(softAuthHandler));
 
 disp := PathDispatcher();
 crashCtx.define('disp', wrapPathDispatcher(disp));
@@ -109,9 +119,6 @@ prefix = (argv.count() > 2) ? argv[2] : '/dweb';
 
 if (argv.count() > 3)
     eval(makePath(argv[3]).readAll(), crashCtx);
-
-data := Data();
-data.init();
 
 ## This really belongs in crack.http.auth
 bool softAuth(Request req) {
@@ -251,10 +258,6 @@ bool sendMail(Request req) {
 #setLogLevel(DEBUG);
 
 authHandler := AuthHandler(data.auth);
-
-# Use this for cases where we can use User data if the user is logged in but
-# don't require a logged in user.
-softAuthHandler := SoftAuthHandler(data.auth);
 
 disp['hello'] = Chain![HandlerFunc(softAuth), HandlerFunc(hello)];
 disp['tiny'] = Chain![HandlerFunc(softAuth), HandlerFunc(tinyPage)];

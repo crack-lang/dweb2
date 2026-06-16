@@ -1,6 +1,8 @@
 
 import crack.cont.array Array;
 import crack.eventmgr EventCallback;
+import crack.http.auth User;
+import crack.http.core Request;
 import crack.io cerr;
 import crack.lang Exception;
 import crack.logger info;
@@ -9,7 +11,7 @@ import crash.crash parseString, Builtin, EvalContext, ObjOf, ParmInfo;
 import crash.types IntObj;
 import slimp.model Agent, JSONObj, Message, MessageEngine, ServerState,
     ServerStateImpl;
-import slimp.http_handler SLIMPEndpoint;
+import slimp.http_handler AgentAccessor, SLIMPEndpoint;
 
 import .globals crashCtx, eventManager;
 
@@ -31,6 +33,10 @@ void gc() {
     nextGC.setToNow(null);
     nextGC.secs += _GC_INTERVAL;
     eventManager.scheduleEvent(nextGC, EventCallback.Wrap(gc));
+}
+
+Agent getAgent(Request req) {
+    return (user := User.get(req)) ? serverState.getUserAgent(user.id) : null;
 }
 
 @function(ctx) int slimpBlock(String code) {
@@ -64,7 +70,10 @@ void gc() {
         eventManager.scheduleEvent(nextGC, EventCallback.Wrap(gc));
     }
 
-    return SLIMPEndpointObj(SLIMPEndpoint(engine, serverState));
+    return SLIMPEndpointObj(SLIMPEndpoint(engine, serverState,
+                                          AgentAccessor.Wrap(getAgent),
+                                          ),
+                            );
 }
 
 crashCtx.define('SLIMPEndpoint', makeSLIMPEndpoint());

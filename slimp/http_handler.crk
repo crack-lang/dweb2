@@ -1,6 +1,7 @@
 
 import crack.cont.array Array;
 import crack.enc.json2 parse, JSONObjectMap;
+import crack.functor Functor1;
 import crack.http.core Request, RequestHandler;
 import crack.http.util PostDataCollector;
 import crack.io cerr, BufferReader, FStr, StringFormatter;
@@ -11,11 +12,17 @@ import .model Agent, JSONObj, Message, MessageEngine, ServerState;
 
 @import crack.ann cvars, impl;
 
+alias AgentAccessor = Functor1[Agent, Request];
+@export_symbols AgentAccessor;
+
 class SLIMPEndpoint @impl RequestHandler {
 
     @cvars {
         MessageEngine __engine;
         ServerState __state;
+
+        ## Functor to be called to try to obtain an agent from a Request.
+        AgentAccessor getAgent;
     }
 
     class _PostHandler @impl RequestHandler {
@@ -80,7 +87,16 @@ class SLIMPEndpoint @impl RequestHandler {
 
         if (!agent) {
             # Either we didn't get a cookie or we couldn't find the agent.
-            agent = __state.getAnonAgent();
+            # Try to create a new agent.
+
+            # Give the callback a chance to validate the user through other
+            # means.
+            agent = getAgent(req);
+
+            # Finally, create an anonymous agent.
+            if (!agent)
+                agent = __state.getAnonAgent();
+
             req.addHeader('Set-Cookie',
                           'SlimpToken=' + __state.addAgent(agent)
                           );

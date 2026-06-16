@@ -316,36 +316,47 @@ class NullIter[E] @impl Iter[E] {
 
 const NULL_MESSAGE_ITER := NullIter[Message]();
 
-class AnonUser @impl User {
-    Array[Message] __outbound = {};
+class UserImpl @impl User {
+    Array[Message] _outbound = {};
     String __address;
-    Time __lastAccess = Time.now();
+    Time _lastAccess = Time.now();
 
     oper init(String defaultUserAddress) : __address = defaultUserAddress {}
 
-    void addMessage(Message message) { __outbound.append(message) }
+    void addMessage(Message message) { _outbound.append(message) }
     String oper .address() { return __address }
     Iter[Message] oper .outboundMessages() {
-        return IterWrap[Array[Message].ArrayIter, Message](__outbound.iter());
+        return IterWrap[Array[Message].ArrayIter, Message](_outbound.iter());
     }
 
     void processAck(Message message) {
         # Just remove the message from the outbound queue.
-        for (i :on __outbound) {
+        for (i :on _outbound) {
             if (i.elem().id == message.ref) {
-                __outbound.delete(i.index);
+                _outbound.delete(i.index);
                 break;
             }
         }
     }
 
     void accessed() {
-        __lastAccess.setToNow(null);
+        _lastAccess.setToNow(null);
     }
 
+    # By default, we don't currently do garbage collection on users because we
+    # want to guarantee delivery when possible.  Reconsider this decision once
+    # we start persisting messages, at which point we should be able to safely
+    # prune inactive users.
+    bool runGCCycle(Time now) { return false }
+}
+
+class AnonUser : UserImpl {
+
+    oper init(String defaultUserAddress) : UserImpl(defaultUserAddress) {}
+
     bool runGCCycle(Time now) {
-        if (now.secs - __lastAccess.secs > _ANON_USER_EXPIRY) {
-            __outbound.clear();
+        if (now.secs - _lastAccess.secs > _ANON_USER_EXPIRY) {
+            _outbound.clear();
             return true;
         } else {
             return false;
@@ -353,13 +364,13 @@ class AnonUser @impl User {
     }
 }
 
-## Agent for a connection that has not been authorized.
-class AnonAgent @impl Agent {
+## An agent representing a single user.
+class SingleUserAgent @impl Agent {
 
-    AnonUser __user;
+    User __user;
     Time __lastAccess = Time.now();
 
-    oper init(String defaultUserAddress) : __user(defaultUserAddress) {}
+    oper init(User user) : __user = user {}
 
     Iter[User] senders() {
         return IterWrap[Array[User].ArrayIter, User](
@@ -545,12 +556,30 @@ class ServerStateImpl @impl ServerState {
     Agent getAnonAgent() {
         ++__lastId;
         id := FStr() `anon$__lastId`;
-        agent := AnonAgent(id);
+        agent := SingleUserAgent(AnonUser(id));
 
         # Add the user to the lobby and the user set.
         __lobby.addMember(id, agent.defaultUser);
         __users[id] = agent.defaultUser;
         return agent;
+    }
+
+    ## Create an agent for a single user (also creating a user object, if
+    ## necessary).
+    ##
+    ## This assumes that the user is valid.  The new agent must subsequently
+    ## be added using addAgent().
+    Agent getUserAgent(String userId) {
+        user := __users.get(userId);
+        if (!user) {
+            __users[userId] = user = UserImpl(userId);
+
+            # We shouldn't just always add the user to the lobby, the user
+            # should be able to manage their set of memberships.
+            __lobby.addMember(userId, user);
+        }
+
+        return SingleUserAgent(user);
     }
 
     User getUser(String addr) {
